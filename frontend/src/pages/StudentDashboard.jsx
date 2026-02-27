@@ -22,7 +22,32 @@ export default function StudentDashboard() {
             handleStartExam();
         },
         'begin exam': () => handleStartExam(),
-        'start': () => handleStartExam()
+        'start': () => handleStartExam(),
+        'logout': () => {
+            speak('Logging out.');
+            logout();
+            navigate('/');
+        },
+        'log out': () => {
+            speak('Logging out.');
+            logout();
+            navigate('/');
+        },
+        'sign out': () => {
+            speak('Signing out.');
+            logout();
+            navigate('/');
+        },
+        'exit': () => {
+            speak('Exiting.');
+            logout();
+            navigate('/');
+        },
+        'close': () => {
+            speak('Closing session.');
+            logout();
+            navigate('/');
+        }
     };
 
     const { isListening, startListening, stopListening } = useVoiceCommands(commandMap, true);
@@ -30,7 +55,10 @@ export default function StudentDashboard() {
     useEffect(() => {
         loadExam();
         loadResults();
-        // speak(`Welcome, ${user?.name || 'student'}. Your exam is ready. Say Start Exam or click the button to begin.`); // Disabled TTS
+        // Speak welcome message on mount
+        if (user?.name) {
+            speak(`Welcome dashboard ${user.name}`, { rate: 1.2 });
+        }
         startListening(); // Start voice listening
     }, []);
 

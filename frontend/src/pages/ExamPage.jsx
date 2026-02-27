@@ -117,8 +117,10 @@ export default function ExamPage() {
         showFeedback(`✅ Answered ${pendingAnswer}`);
         setShowConfirm(false);
         setPendingAnswer(null);
-        // nextQuestion(); // Re-enabled auto-advance for fast flow
-        nextQuestion();
+        // Wait 1 second before moving to next question as requested
+        setTimeout(() => {
+            nextQuestion();
+        }, 1000);
     }, [pendingAnswer, currentQuestion, setAnswer, saveAnswer, speak, nextQuestion]);
 
     const cancelAnswer = useCallback(() => {
@@ -144,7 +146,10 @@ export default function ExamPage() {
         showFeedback('✅ Answer saved');
         setOpenEndedText('');
         setIsConfirmingOpenEnded(false);
-        nextQuestion();
+        // Wait 1 second before moving to next question as requested
+        setTimeout(() => {
+            nextQuestion();
+        }, 1000);
     }, [currentQuestion, openEndedText, setAnswer, saveAnswer, speak, nextQuestion]);
 
     const cancelOpenEnded = useCallback(() => {
@@ -186,10 +191,32 @@ export default function ExamPage() {
         'move next': () => nextQuestion(),
         'continue': () => nextQuestion(),
 
-        'back': () => prevQuestion(),
-        'go back': () => prevQuestion(),
-        'previous': () => prevQuestion(),
-        'previous question': () => prevQuestion(),
+        'back': () => {
+            if (currentIndex > 0) {
+                speak('Going back.', { rate: 1.3 });
+                prevQuestion();
+            } else {
+                speak('This is the first question.');
+            }
+        },
+        'go back': () => {
+            if (currentIndex > 0) {
+                speak('Going back.', { rate: 1.3 });
+                prevQuestion();
+            }
+        },
+        'previous': () => {
+            if (currentIndex > 0) {
+                speak('Previous question.', { rate: 1.3 });
+                prevQuestion();
+            }
+        },
+        'previous question': () => {
+            if (currentIndex > 0) {
+                speak('Previous question.', { rate: 1.3 });
+                prevQuestion();
+            }
+        },
         'take me back': () => prevQuestion(),
         'move back': () => prevQuestion(),
 
@@ -249,22 +276,46 @@ export default function ExamPage() {
         },
 
         'finish': () => {
+            setShowFinishModal(true); // Show immediately
             const rem = unansweredQuestions.length;
             if (rem > 0) {
-                speak(`You still have ${rem} unanswered questions. Would you like to review them?`);
+                // Concise warning
+                speak(`${rem} unanswered. Submit? Yes or No?`, { rate: 1.3 });
             } else {
-                speak('All questions answered. Are you sure you want to submit?');
+                // Fast confirmation
+                speak('Submit exam? Yes or No?', { rate: 1.3 });
             }
+        },
+        'finish exam': () => {
             setShowFinishModal(true);
+            speak('Submit? Yes or No?', { rate: 1.3 });
         },
-        'finish exam': () => setShowFinishModal(true),
-        'submit exam': () => setShowFinishModal(true),
-        'submit my answers': () => setShowFinishModal(true),
+        'submit exam': () => {
+            setShowFinishModal(true);
+            speak('Submit? Yes or No?', { rate: 1.3 });
+        },
+        'submit my answers': () => {
+            setShowFinishModal(true);
+            speak('Submit? Yes or No?', { rate: 1.3 });
+        },
 
-        'option': (letter) => {
-            // Conversational MCQ: Select and ask for confirmation
-            selectOption(letter);
-        },
+        'option': (letter) => selectOption(letter),
+
+        // Explicit single letter commands for speed
+        'a': () => selectOption('A'),
+        'b': () => selectOption('B'),
+        'c': () => selectOption('C'),
+        'd': () => selectOption('D'),
+
+        'answer a': () => selectOption('A'),
+        'answer b': () => selectOption('B'),
+        'answer c': () => selectOption('C'),
+        'answer d': () => selectOption('D'),
+
+        'select a': () => selectOption('A'),
+        'select b': () => selectOption('B'),
+        'select c': () => selectOption('C'),
+        'select d': () => selectOption('D'),
         'yes': () => {
             if (showFinishModal) { setShowFinishModal(false); handleFinish(); }
             else if (isConfirmingOpenEnded) confirmOpenEnded();

@@ -47,16 +47,22 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         // 2. Intent-Based Matching (Variations)
         for (const [pattern, handler] of Object.entries(commands)) {
             const patternLower = pattern.toLowerCase();
-            // Exact match or includes for natural variations
-            if (text === patternLower || text.includes(patternLower)) {
+
+            // Safety: Short commands (like 'a', 'no') must be exact matches to avoid false positives in longer sentences
+            const isMatch = patternLower.length <= 2
+                ? text === patternLower
+                : text.includes(patternLower);
+
+            if (isMatch) {
                 setLastCommand(pattern);
                 handler(text);
                 return true;
             }
         }
 
-        // 3. Smart Option Selection: "Option A", "Choose B", "Answer C", or just "A"
-        const optionMatch = text.match(/(?:option|choose|answer|select)?\s*([a-d])\b/i);
+        // 3. Smart Option Selection matches: "Option A", "Choose B", "Answer C", or just "A"
+        // This regex handles the single letter case if strictly "A" is spoken, or "Option A"
+        const optionMatch = text.match(/(?:option|choose|answer|select)?\s*\b([a-d])\b/i);
         if (optionMatch && commands['option']) {
             const letter = optionMatch[1].toUpperCase();
             setLastCommand(`Option ${letter}`);

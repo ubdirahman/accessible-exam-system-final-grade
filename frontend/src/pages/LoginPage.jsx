@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTTS } from '../hooks/useTTS';
@@ -8,19 +8,22 @@ import api from '../api/axios';
 export default function LoginPage() {
     const [mode, setMode] = useState('student'); // 'student' | 'admin'
     const [studentId, setStudentId] = useState('');
-    const [examCode, setExamCode] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // Voice Flow State: 'IDLE' | 'LISTENING_ID' | 'CONFIRM_ID'
+    const [voiceStep, setVoiceStep] = useState('IDLE');
+
     const { login } = useAuth();
     const navigate = useNavigate();
-    const { speak } = useTTS();
+    const { speak, stop: stopSpeaking, isSpeaking } = useTTS();
 
     // Student Login Core Logic
     const performStudentLogin = useCallback(async (id = studentId) => {
         if (!id) {
-            speak('Please provide your student I D first.');
+            speak('Please provide your student I D first.', { rate: 1.2 });
             return;
         }
         setError('');
@@ -32,17 +35,17 @@ export default function LoginPage() {
                 { ...res.data.student, role: 'student', examId: res.data.exam.id },
                 res.data.token
             );
-            speak(`Login successful. Welcome ${res.data.student.name}. Your exam is ready.`);
+            // Navuate immediately - Dashboard will handle the welcome speech
             navigate('/student/dashboard');
         } catch (err) {
             const msg = err.response?.data?.message || 'Login failed. Please check your I D.';
             setError(msg);
-            speak(msg);
+            speak(msg, { rate: 1.2 });
 
             // Clear textbox and restart listening if login failed
             setStudentId('');
             if (mode === 'student') {
-                // Using a flag to restart listening
+                setVoiceStep('LISTENING_ID');
                 window._shouldRestartListening = true;
             }
         } finally {
@@ -72,98 +75,159 @@ export default function LoginPage() {
         }
     };
 
-    // Voice Commands
-    const commandMap = {
-        'set student id': (id) => {
-            console.log('Voice: Setting student ID to', id);
-            setStudentId(id);
-            speak(`I D ${id} entered. Say "Enter exam" to continue.`);
-        },
-        'enter exam': () => {
-            console.log('Voice: Enter exam command');
-            performStudentLogin();
-        },
-        'go exam': () => {
-            console.log('Voice: Go exam command');
-            performStudentLogin();
-        },
-        'begin': () => performStudentLogin(),
-        'start': () => performStudentLogin()
+    // Voice Commands Map - Dynamic based on voiceStep
+    const getCommandMap = () => {
+        if (voiceStep === 'CONFIRM_ID') {
+            return {
+                'yes': () => {
+                    console.log('Voice: Confirmed ID');
+                    setVoiceStep('IDLE'); // Stop listening/flow while logging in
+                    performStudentLogin();
+                },
+                'no': () => {
+                    console.log('Voice: Rejected ID');
+                    setStudentId('');
+                    // Quick clear prompts
+                    stopListening();
+                    speak('Cleared. Enter I D.', {
+                        rate: 1.3,
+                        onEnd: () => {
+                            setVoiceStep('LISTENING_ID');
+                            startListening();
+                        }
+                    });
+                },
+                'cancel': () => {
+                    setStudentId('');
+                    stopListening();
+                    speak('Cleared.', {
+                        rate: 1.3,
+                        onEnd: () => {
+                            setVoiceStep('LISTENING_ID');
+                            startListening();
+                        }
+                    });
+                }
+            };
+        }
+
+        // Default commands when listening for ID
+        return {
+            'set student id': (id) => {
+                handleIdInput(id);
+            }
+        };
     };
 
-    const { isListening, transcript, lastCommand, startListening, stopListening } = useVoiceCommands(commandMap, mode === 'student');
+    const { isListening, transcript, lastCommand, startListening, stopListening } = useVoiceCommands(getCommandMap(), mode === 'student');
 
-    // Sync transcript to Student ID field ONLY AFTER speech ends (not during)
-    // Wait for silence, then show text and auto-submit
+    // Helper to switch between speaking and listening
+    // This enforces the "Silencing" requirement
+    const speakAndListen = useCallback((text, options = {}) => {
+        stopListening(); // Turn off mic immediately
+        speak(text, {
+            ...options,
+            onEnd: () => {
+                if (options.onEnd) options.onEnd();
+                // Turn mic back on ONLY after speech finishes
+                startListening();
+            }
+        });
+    }, [speak, startListening, stopListening]);
+
+    // Helper to process valid ID input
+    const handleIdInput = useCallback((id) => {
+        if (!id || voiceStep !== 'LISTENING_ID') return;
+
+        const cleanId = id.replace(/\s/g, '').toUpperCase();
+        setStudentId(cleanId);
+
+        // Transition to Confirmation
+        setVoiceStep('CONFIRM_ID');
+        // Stop Listen -> Speak -> Start Listen
+        speakAndListen(`Are you sure? I D is ${cleanId.split('').join(' ')}. Yes or No?`, { rate: 1.2 });
+    }, [voiceStep, speakAndListen]);
+
+    // Transcript Processing specifically for capturing ID
     useEffect(() => {
-        if (isListening && transcript && mode === 'student') {
+        if (isListening && transcript && mode === 'student' && voiceStep === 'LISTENING_ID') {
             const lower = transcript.toLowerCase();
 
-            // Don't show command phrases in textbox
-            const commandPhrases = ['enter exam', 'go exam', 'begin', 'start'];
-            const isCommand = commandPhrases.some(cmd => lower.includes(cmd));
+            // 1. Real-time visual update (Sound to Text)
+            if (lower.includes('yes') || lower.includes('no')) return;
 
-            // Clear any previous timer
+            let potentialId = transcript;
+            if (lower.includes('my id is')) {
+                const parts = lower.split('my id is');
+                potentialId = parts[1] || '';
+            }
+
+            const cleanText = potentialId.replace(/\s/g, '').toUpperCase();
+
+            // Textbox Update
+            if (cleanText) {
+                setStudentId(cleanText);
+            }
+
+            // 2. Debounce for Finalization
             clearTimeout(window._transcriptTimer);
 
-            // Don't update textbox immediately - wait for speech to pause
+            // 500ms delay to allow finishing the ID
             window._transcriptTimer = setTimeout(() => {
-                // Speech has paused - now process and display
-                if (lower.includes('my id is')) {
-                    // Extract ID after "my id is"
-                    const parts = lower.split('my id is');
-                    if (parts[1]) {
-                        const id = parts[1].trim().replace(/\s/g, '').toUpperCase();
-                        setStudentId(id);
-
-                        // Auto-submit IMMEDIATELY after displaying
-                        if (id && id.length >= 3) {
-                            console.log('Auto-submitting with ID:', id);
-                            stopListening();
-                            performStudentLogin(id);
-                        }
-                    }
-                } else if (!isCommand) {
-                    // Direct number input
-                    const cleanText = transcript.replace(/\s/g, '').toUpperCase();
-                    setStudentId(cleanText);
-
-                    // Auto-submit if 4-6 characters
-                    if (/^[A-Z0-9]{4,6}$/.test(cleanText)) {
-                        console.log('Auto-submitting with detected ID:', cleanText);
-                        stopListening();
-                        performStudentLogin(cleanText);
-                    }
+                // Finalize if we have content
+                if (cleanText.length >= 1) {
+                    handleIdInput(cleanText);
                 }
-            }, 800); // Reduced to 800ms for snappier response
+            }, 500);
         }
-    }, [transcript, isListening, mode, performStudentLogin, stopListening]);
+    }, [transcript, isListening, mode, voiceStep, handleIdInput]);
 
+    // Initial Welcome Flow
     useEffect(() => {
         if (mode === 'student') {
-            startListening();
-            speak('Welcome. Please say "My I D is" followed by your identification number.');
+            // Reset state
+            setStudentId('');
+            setError('');
+            setVoiceStep('LISTENING_ID');
+
+            // Strict Sequence:
+            // 1. System Speak "Welcome..." (Mic OFF)
+            // 2. System Silent
+            // 3. System Listen (Mic ON)
+            speakAndListen('Welcome. Enter Student I D.', { rate: 1.2 });
         } else {
             stopListening();
+            setVoiceStep('IDLE');
         }
-        return () => stopListening();
-    }, [mode]);
+    }, [mode, speakAndListen, stopListening]);
 
-    // Restart listening if login failed
+    // Restart listening if needed (e.g. after error)
     useEffect(() => {
         if (window._shouldRestartListening && !isListening) {
             window._shouldRestartListening = false;
-            setTimeout(() => startListening(), 1000);
+            startListening();
         }
-    }, [loading, isListening, startListening]);
+    }, [isListening, startListening]);
 
     return (
         <div className="page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {/* Voice Indicator */}
             {mode === 'student' && (
-                <div className={`voice-indicator ${isListening ? 'listening' : ''}`} style={{ position: 'fixed', top: 100, left: '50%', transform: 'translateX(-50%)', zIndex: 1000 }}>
+                <div className={`voice-indicator ${isListening ? 'listening' : ''}`}
+                    style={{
+                        position: 'fixed',
+                        top: 'clamp(80px, 15vh, 120px)',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        zIndex: 1000,
+                        width: 'max-content',
+                        maxWidth: '90vw'
+                    }}>
                     <div className="voice-dot"></div>
-                    <span>{isListening ? (lastCommand || 'Listening...') : 'Voice Off'}</span>
+                    <span>
+                        {voiceStep === 'CONFIRM_ID' ? 'Say Yes or No' :
+                            isListening ? (lastCommand || 'Listening for ID...') : 'Voice Off'}
+                    </span>
                 </div>
             )}
             <div style={{ width: '100%', maxWidth: 520 }}>
@@ -218,11 +282,16 @@ export default function LoginPage() {
                                     required
                                     autoFocus
                                     aria-required="true"
+                                    // Visual cue for state
+                                    style={{
+                                        borderColor: voiceStep === 'CONFIRM_ID' ? 'var(--primary)' : undefined,
+                                        boxShadow: voiceStep === 'CONFIRM_ID' ? '0 0 0 4px rgba(37, 99, 235, 0.1)' : undefined
+                                    }}
                                 />
                             </div>
 
                             <button className="btn btn-primary btn-lg" style={{ width: '100%' }} type="submit" disabled={loading}>
-                                {loading ? '⏳ Logging in...' : '🎤 Enter Exam'}
+                                {loading ? '⏳ Logging in...' : (voiceStep === 'CONFIRM_ID' ? '🎤 Say "Yes" to Confirm' : '🎤 Enter Exam')}
                             </button>
                         </form>
                     ) : (
@@ -260,7 +329,7 @@ export default function LoginPage() {
 
                     <div className="text-center mt-lg text-muted" style={{ fontSize: 'var(--font-size-sm)' }}>
                         {mode === 'student'
-                            ? '💡 Simply enter your Student ID to access your exam'
+                            ? '💡 Speak your ID, then say Yes to confirm.'
                             : '💡 Contact system admin if you forgot your credentials'
                         }
                     </div>

@@ -116,6 +116,17 @@ MODEL_NAME=all-MiniLM-L6-v2
 | GET    | /api/logs/:examId/:studentId    | Admin    | View activity logs       |
 | POST   | /ml/grade-open-ended            | Internal | ML grading endpoint      |
 
+## Git Automation ⚙️
+
+A simple PowerShell script is provided at the project root to automate the Git workflow. It stages all changes, commits with your message, and pushes to the current branch.
+
+```powershell
+# from the repo root
+.\auto_commit_push.ps1 "Your commit message here"
+```
+
+You can also adapt the script to turn it into a Git hook or alias depending on your preferences.
+
 ## Project Structure
 
 ```
