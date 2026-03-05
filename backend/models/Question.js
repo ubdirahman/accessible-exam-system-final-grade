@@ -6,7 +6,7 @@ const questionSchema = new mongoose.Schema({
     type: { type: String, enum: ['mcq', 'true-false', 'open-ended'], required: true },
     questionText: { type: String, required: true },
     options: [{ label: String, text: String }],
-    correctAnswer: { type: String, required: true },
+    correctAnswer: { type: String, required: function() { return this.type !== 'open-ended'; } },
     points: { type: Number, default: 1 },
     order: { type: Number, default: 0 }
 });

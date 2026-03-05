@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useExam } from '../context/ExamContext';
@@ -15,14 +15,86 @@ export default function StudentDashboard() {
     const [examData, setExamData] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    const [waitingStart, setWaitingStart] = useState(false);
+    const [waitingRepeat, setWaitingRepeat] = useState(false);
+    const [hasSpokenIntro, setHasSpokenIntro] = useState(false);
+    const [confirmStartPending, setConfirmStartPending] = useState(false);
+
+    const speakExamInstructions = useCallback((payload = examData) => {
+        const data = payload || examData;
+        const exam = data?.exam;
+        if (!exam) return;
+
+        const totalQuestions = data?.questions?.length || 0;
+        const description = exam.description ? `${exam.description} ` : '';
+        const timeLine = exam.timeLimit > 0
+            ? `You have ${exam.timeLimit} minutes to finish. `
+            : 'This exam is not timed. ';
+
+        const text = [
+            `Welcome ${user?.name || 'student'}. Ku soo dhawoow ${user?.name || 'araday'}.`,
+            `You are scheduled for the exam titled ${exam.title}.`,
+            description,
+            `It contains ${totalQuestions} questions.`,
+            timeLine,
+            'Should I start the exam now? Please say Yes or No. Ma ku bilaabaa imtixaanka? Haa ama Maya.'
+        ].join(' ');
+
+        // Slightly slower than default so it is easy to follow
+        speak(text, { rate: 1.0 });
+        setWaitingStart(true);
+        setConfirmStartPending(true);
+        setWaitingRepeat(false);
+    }, [examData, speak, user?.name]);
+
+    const handleAffirmative = () => {
+        if (waitingStart && confirmStartPending) {
+            setWaitingStart(false);
+            setConfirmStartPending(false);
+            startExamNow();
+        } else if (waitingRepeat) {
+            setWaitingRepeat(false);
+            speakExamInstructions();
+            // speakExamInstructions sets waitingStart for us
+        }
+    };
+
+    const handleNegative = () => {
+        if (waitingStart || waitingRepeat) {
+            setWaitingRepeat(false);
+            speakExamInstructions();
+        }
+    };
+
+    const requestStartConfirmation = () => {
+        setWaitingStart(true);
+        setConfirmStartPending(true);
+        speak('Ma bilaabi karaa imtixaanka? Should I start the exam now? Please say Yes or No.', { rate: 1.0 });
+    };
+
     // Voice Commands
     const commandMap = {
         'start exam': () => {
             console.log('Voice: Start exam command');
-            handleStartExam();
+            requestStartConfirmation();
         },
-        'begin exam': () => handleStartExam(),
-        'start': () => handleStartExam(),
+        'begin exam': () => requestStartConfirmation(),
+        'start': () => requestStartConfirmation(),
+        'repeat instructions': () => {
+            if (examData?.exam) {
+                speakExamInstructions();
+            }
+        },
+        'help me': () => {
+            speak('Sideen ku caawin karaa? I can repeat the exam instructions or start the exam. Say "Repeat instructions" or say "Start exam" when you are ready.');
+            setWaitingRepeat(true);
+            setWaitingStart(false);
+            setConfirmStartPending(false);
+        },
+        'yes': handleAffirmative,
+        'haa': handleAffirmative, // Somali: yes
+        'no': handleNegative,
+        'maya': handleNegative,   // Somali: no
         'logout': () => {
             speak('Logging out.');
             logout();
@@ -55,12 +127,15 @@ export default function StudentDashboard() {
     useEffect(() => {
         loadExam();
         loadResults();
-        // Speak welcome message on mount
-        if (user?.name) {
-            speak(`Welcome dashboard ${user.name}`, { rate: 1.2 });
-        }
         startListening(); // Start voice listening
     }, []);
+
+    useEffect(() => {
+        if (examData?.exam && !examResult && !hasSpokenIntro) {
+            speakExamInstructions(examData);
+            setHasSpokenIntro(true);
+        }
+    }, [examData, examResult, hasSpokenIntro, speakExamInstructions]);
 
     const loadExam = async () => {
         try {
@@ -86,9 +161,8 @@ export default function StudentDashboard() {
         }
     };
 
-    const handleStartExam = async () => {
+    async function startExamNow() {
         if (examResult) {
-            // speak('You have already completed this exam. Redirecting to results.'); // Disabled TTS
             navigate('/student/result');
             return;
         }
@@ -96,18 +170,16 @@ export default function StudentDashboard() {
         try {
             const res = await api.post(`/exams/${user.examId}/start`);
             startExam(res.data.exam, res.data.sections, res.data.questions);
-            // speak('Exam started. Good luck!'); // Disabled TTS
             navigate('/student/exam');
         } catch (err) {
             const msg = err.response?.data?.message || 'Could not start exam.';
-            // speak(msg); // Disabled TTS
 
             // If error is "already completed", try to load results
             if (err.response?.status === 400 && msg.includes('already completed')) {
                 loadResults();
             }
         }
-    };
+    }
 
     if (loading) {
         return (
@@ -126,11 +198,11 @@ export default function StudentDashboard() {
                 {/* Header */}
                 <div className="navbar" style={{ position: 'relative', borderRadius: 'var(--radius)', marginBottom: 32 }}>
                     <div className="navbar-brand">
-                        <span className="icon">♿</span>
+                        <span className="icon" aria-hidden="true"><i className="fa-solid fa-universal-access"></i></span>
                         Student Dashboard
                     </div>
                     <div className="navbar-actions">
-                        <span className="badge badge-info">🎓 {user?.name}</span>
+                        <span className="badge badge-info"><i className="fa-solid fa-user-graduate" aria-hidden="true"></i> {user?.name}</span>
                         <button className="btn btn-secondary btn-sm" onClick={() => { logout(); navigate('/'); }}>
                             Logout
                         </button>
@@ -142,7 +214,7 @@ export default function StudentDashboard() {
                         {/* Exam Info Card */}
                         <div className="card" style={{ marginBottom: 24 }}>
                             <h2 style={{ fontSize: 'var(--font-size-xl)', fontWeight: 800, marginBottom: 12 }}>
-                                📝 {exam.title}
+                                <i className="fa-solid fa-clipboard-list" aria-hidden="true"></i> {exam.title}
                             </h2>
                             <p className="text-muted" style={{ marginBottom: 20 }}>{exam.description}</p>
 
@@ -156,8 +228,10 @@ export default function StudentDashboard() {
                                     <div className="stat-label">Questions</div>
                                 </div>
                                 <div className="stat-card">
-                                    <div className="stat-value">{exam.timeLimit > 0 ? '⏱️' : '♾️'}</div>
-                                    <div className="stat-label">Timed</div>
+                                    <div className="stat-value" aria-hidden="true">
+                                        <i className={`fa-solid ${exam.timeLimit > 0 ? 'fa-hourglass-half' : 'fa-infinity'}`}></i>
+                                    </div>
+                                    <div className="stat-label">{exam.timeLimit > 0 ? 'Timed' : 'No Time Limit'}</div>
                                 </div>
                             </div>
                         </div>
@@ -165,7 +239,7 @@ export default function StudentDashboard() {
                         {/* Instructions */}
                         {!examResult && (
                             <div className="card" style={{ marginBottom: 24 }}>
-                                <h3 style={{ marginBottom: 16, fontWeight: 700 }}>🎤 Voice Commands</h3>
+                                <h3 style={{ marginBottom: 16, fontWeight: 700 }}><i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> Voice Commands</h3>
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 12 }}>
                                     {[
                                         '"Next Question" — Go to next',
@@ -175,7 +249,11 @@ export default function StudentDashboard() {
                                         '"Skip Question" — Skip current',
                                         '"How many remaining" — Check progress',
                                         '"Return to Unanswered" — Go to skipped',
-                                        '"Finish Exam" — Submit exam'
+                                        '"Finish Exam" — Submit exam',
+                                        '"I don\'t understand" — Ask for explanation',
+                                        '"Help me" — Get support',
+                                        '"What does [word] mean" — Define a word',
+                                        '"I feel nervous" — Calming advice'
                                     ].map((cmd, i) => (
                                         <div key={i} style={{ padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
                                             {cmd}
@@ -190,7 +268,7 @@ export default function StudentDashboard() {
                             {examResult ? (
                                 <div>
                                     <div className="badge badge-success mb-md" style={{ display: 'inline-flex', padding: '12px 24px', fontSize: '1.1rem' }}>
-                                        ✅ Exam Completed
+                                        <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Exam Completed
                                     </div>
                                     <br />
                                     <button
@@ -198,18 +276,18 @@ export default function StudentDashboard() {
                                         onClick={() => navigate('/student/result')}
                                         style={{ padding: '20px 60px', fontSize: 'var(--font-size-xl)', marginTop: 16 }}
                                     >
-                                        📊 View Results
+                                        <i className="fa-solid fa-chart-column" aria-hidden="true"></i> View Results
                                     </button>
                                 </div>
                             ) : (
                                 <>
                                     <button
                                         className="btn btn-primary btn-lg"
-                                        onClick={handleStartExam}
+                                        onClick={requestStartConfirmation}
                                         aria-label="Start Exam"
                                         style={{ padding: '20px 60px', fontSize: 'var(--font-size-xl)' }}
                                     >
-                                        🚀 Start Exam
+                                        <i className="fa-solid fa-rocket" aria-hidden="true"></i> Start Exam
                                     </button>
                                     <p className="text-muted mt-md">Or say &quot;Start Exam&quot;</p>
                                 </>

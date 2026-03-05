@@ -1,3 +1,6 @@
+/* Font Awesome fallback in CSS */
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css');
+
 /* ======================================================
    Accessible Digital Examination System — Global Styles
    High-contrast, large-font, accessible design
@@ -129,6 +132,71 @@ a {
   /* Reduced for mobile */
   min-height: 100vh;
   animation: fadeIn 0.3s ease;
+}
+
+/* Admin/Teacher shell */
+.admin-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+@media (max-width: 900px) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-sidebar {
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sidebar-brand {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.sidebar-title {
+  font-weight: 800;
+}
+
+.sidebar-subtitle {
+  font-size: var(--font-size-sm);
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-nav .btn {
+  justify-content: flex-start;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.sidebar-nav .btn.active {
+  background: var(--bg-elevated);
+}
+
+.nav-icon {
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+}
+
+.admin-main {
+  padding: 24px;
 }
 
 @media (min-width: 768px) {

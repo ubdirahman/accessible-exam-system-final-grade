@@ -13,6 +13,9 @@ const examSchema = new mongoose.Schema({
         expiresAt: { type: Date, required: true }
     }],
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+    facultyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Faculty', default: null },
+    classId: { type: mongoose.Schema.Types.ObjectId, ref: 'Classroom', default: null },
+    subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', default: null },
     createdAt: { type: Date, default: Date.now }
 });
 

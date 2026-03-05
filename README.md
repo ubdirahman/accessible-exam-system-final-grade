@@ -30,9 +30,11 @@ A full-stack examination platform designed for visually impaired students, featu
 cd backend
 cp .env .env.local       # Edit if needed
 npm install
-npm run seed             # Create demo data
+npm run seed             # Create demo data (overwrites existing records)
 npm run dev              # Starts on :5000
 ```
+
+> **Note:** The application also ensures a default admin account (`admin@gmail.com` / `123456`) is created automatically on startup if none exist. Running `npm run seed` will replace it along with other demo data.
 
 ### 2. Python ML Service
 
@@ -61,7 +63,7 @@ Open **http://localhost:5173**
 
 | Role    | Login                                     |
 |---------|-------------------------------------------|
-| Admin   | Email: `admin@gmail.com`, Password: `admin123` |
+| Admin   | Email: `admin@gmail.com`, Password: `123456` |
 | Student | ID: `STU001`                               |
 | Student | ID: `STU002`                               |
 | Student | ID: `STU003`                               |
@@ -80,6 +82,15 @@ Open **http://localhost:5173**
 | "Return to Unanswered"     | Jump to first unanswered  |
 | "Go to Part 1/2/3"         | Jump to section           |
 | "Finish Exam"              | Submit exam               |
+| "I don't understand"       | Ask the AI helper to explain the question |
+| "Help me"                 | Get friendly support or definitions |
+| "What does [word] mean"   | Ask for a definition      |
+| "I feel nervous"          | Hear some calming advice  |
+
+The built-in AI help assistant runs in the **ml-service** and can respond to
+natural voice or text requests during the exam without revealing answers. Use
+it if you're unsure about wording, definitions, or need reassurance. It
+respects exam integrity and will never give away the correct option.
 
 ## Environment Variables
 
@@ -103,17 +114,60 @@ MODEL_NAME=all-MiniLM-L6-v2
 |--------|---------------------------------|----------|--------------------------|
 | POST   | /api/student-login              | Public   | Student login            |
 | POST   | /api/admin-login                | Public   | Admin login              |
+| POST   | /api/teacher-login              | Public   | Teacher login            |
 | GET    | /api/exams                      | Admin    | List all exams           |
-| POST   | /api/exams                      | Admin    | Create exam              |
+
+
+### Grading & Teacher Workflow
+
+- **Auto‑grading**: When a student submits an answer, multiple‑choice and
+  true/false questions (typically parts 1 and 2) are graded automatically by
+  the backend. The correct answer is compared, the score assigned, and the
+  response marked `autoGraded`. Teachers do **not** need to review these
+  answers – they are recorded correctly immediately.
+
+- **Manual grading**: Only open‑ended questions (usually part 3) are left for
+  teacher review. In the teacher dashboard, only non‑auto‑graded responses
+  appear; the instructor can then click **Correct** or **Incorrect** for each
+  one. Once graded, the response is marked `manuallyGraded` and the choice is
+  locked.
+
+  Teachers (and administrators) can even use speech – select a row and say “correct” or
+  “incorrect” – and the system will apply that grade. Student answers are
+  preserved verbatim; grading does not overwrite the original response.  In
+  fact teachers may even **override automatic grading**; options that were
+  scored by the backend are shown to instructors so they can fix mistakes or
+  give partial credit.
+
+  Administrators have the same grading interface via the **Responses** link
+  available on the *Exams* list page. This lets an admin correct or adjust a
+  student’s answer without switching accounts.
+
+This separation ensures that parts 1 and 2 are handled automatically and the
+teacher/admin only focuses on the longer, subjective items in part 3.
+
+- After grading, students can view their results page and use the “Read
+  Feedback” button (or say “read feedback” aloud) to have the system speak
+  whether each question was correct or incorrect along with any teacher
+  comments. This lets the admin/teacher effectively tell the student which
+  questions they got right or wrong.
+| GET    | /api/exams/my                   | Admin/Teacher | List your exams      |
+| POST   | /api/exams                      | Admin/Teacher | Create exam           |
 | PUT    | /api/exams/:id                  | Admin    | Update exam              |
 | DELETE | /api/exams/:id                  | Admin    | Delete exam              |
 | POST   | /api/exams/:id/generate-codes   | Admin    | Generate exam codes      |
+| GET    | /api/results/exam/:examId       | Admin    | Get all results for exam (includes question details)
+| GET    | /api/results/analytics/:examId | Admin    | Exam analytics statistics
 | POST   | /api/exams/:id/start            | Student  | Start exam               |
 | POST   | /api/exams/:id/answer           | Student  | Submit/update answer     |
 | POST   | /api/exams/:id/finish           | Student  | Finish exam              |
 | GET    | /api/results/:studentId         | Auth     | Get student results      |
+| POST   | /api/teachers                   | Admin    | Add teacher account      |
+| GET    | /api/teachers                   | Admin    | List teachers            |
 | GET    | /api/results/:sid/:eid/pdf      | Auth     | Download result PDF      |
 | GET    | /api/logs/:examId/:studentId    | Admin    | View activity logs       |
+| GET    | /api/exams/:examId/students     | Admin/Teacher | List students for exam|
+| GET    | /api/exams/:examId/students/:studentId/responses | Admin/Teacher | Student answers   |
 | POST   | /ml/grade-open-ended            | Internal | ML grading endpoint      |
 
 ## Git Automation ⚙️

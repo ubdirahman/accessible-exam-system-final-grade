@@ -86,7 +86,9 @@ function generateResultPDF({ student, exam, result, questions, responses }) {
 
                 if (resp && resp.selectedAnswer) {
                     doc.text(`Your Answer: ${resp.selectedAnswer}`);
-                    doc.text(`Correct Answer: ${q.correctAnswer}`);
+                    if (q.type !== 'open-ended' && q.correctAnswer) {
+                        doc.text(`Correct Answer: ${q.correctAnswer}`);
+                    }
                     doc.text(`Result: ${resp.isCorrect ? '✓ Correct' : '✗ Incorrect'} (${resp.score || 0} pts)`);
                     if (resp.mlFeedback) {
                         doc.text(`ML Feedback: ${resp.mlFeedback}`);

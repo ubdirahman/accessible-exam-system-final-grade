@@ -23,10 +23,50 @@ export default function ExamPage() {
     const [pendingAnswer, setPendingAnswer] = useState(null);
     const [showFinishModal, setShowFinishModal] = useState(false);
     const [openEndedText, setOpenEndedText] = useState('');
+    const [pendingDictation, setPendingDictation] = useState('');
+    const [waitingAnswerConfirm, setWaitingAnswerConfirm] = useState(false);
+    const [waitingNextConfirm, setWaitingNextConfirm] = useState(false);
+    const [waitingFinishConfirm, setWaitingFinishConfirm] = useState(false);
+    const [waitingUnansweredDecision, setWaitingUnansweredDecision] = useState(false);
+    // waiting for yes/no continue prompt
+    const [waitingForContinue, setWaitingForContinue] = useState(false);
     const [timeRemaining, setTimeRemaining] = useState(0);
     const autoSaveRef = useRef(null);
+    const dictationSaveTimer = useRef(null);
+    const dictationTimeoutRef = useRef(null);
 
-    // Timer
+    const showFeedback = (msg) => {
+        setFeedbackMsg(msg);
+        setTimeout(() => setFeedbackMsg(''), 3500);
+    };
+
+    // ----- New: Help integration -----
+    const requestHelp = useCallback(async (studentText) => {
+        if (!currentQuestion) {
+            speak('No question is active.');
+            return;
+        }
+        try {
+            const res = await fetch('/ml/help', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    studentText,
+                    questionText: currentQuestion.questionText
+                })
+            });
+            if (!res.ok) throw new Error(`Status ${res.status}`);
+            const data = await res.json();
+            const text = data.response || 'Sorry, I could not generate a help message.';
+            speak(text);
+            setFeedbackMsg(text);
+        } catch (e) {
+            console.error('Help request failed', e);
+            speak('Sorry, I could not get help right now.');
+        }
+    }, [currentQuestion, speak]);
+
+        // Timer
     useEffect(() => {
         if (!exam) return;
         const totalSecs = exam.timeLimit * 60;
@@ -52,19 +92,6 @@ export default function ExamPage() {
         return () => clearInterval(autoSaveRef.current);
     }, [currentQuestion, answers, saveAnswer]);
 
-    // Read question on change
-    useEffect(() => {
-        if (currentQuestion) {
-            speakQuestion(currentQuestion);
-            // Log activity
-            api.post('/logs', {
-                examId: exam.id,
-                action: 'question_opened',
-                questionId: currentQuestion.id,
-                details: `Question ${currentIndex + 1}`
-            }).catch(() => { });
-        }
-    }, [currentIndex]);
 
     // Security: prevent copy/paste
     useEffect(() => {
@@ -94,18 +121,13 @@ export default function ExamPage() {
         };
     }, [exam]);
 
-    const showFeedback = (msg) => {
-        setFeedbackMsg(msg);
-        setTimeout(() => setFeedbackMsg(''), 3500);
-    };
-
     const selectOption = useCallback((letter) => {
         if (!currentQuestion) return;
         if (currentQuestion.type === 'open-ended') return;
 
         setPendingAnswer(letter);
         speak(`${letter}? Yes or no?`);
-        showFeedback(`❓ Confirm ${letter}`);
+        showFeedback(`Confirm ${letter}`);
         setShowConfirm(true);
     }, [currentQuestion, speak]);
 
@@ -113,15 +135,13 @@ export default function ExamPage() {
         if (!pendingAnswer || !currentQuestion) return;
         setAnswer(currentQuestion.id, pendingAnswer);
         saveAnswer(currentQuestion.id, pendingAnswer); // Non-blocking for speed
-        speak('Confirmed.');
-        showFeedback(`✅ Answered ${pendingAnswer}`);
+        // More descriptive confirmation for a blind user
+        speak('Answer recorded. Say Yes to continue or No to stay here.');
+        showFeedback(`<i className="fa-solid fa-circle-check" aria-hidden="true"></i> Answered ${pendingAnswer}`);
         setShowConfirm(false);
         setPendingAnswer(null);
-        // Wait 1 second before moving to next question as requested
-        setTimeout(() => {
-            nextQuestion();
-        }, 1000);
-    }, [pendingAnswer, currentQuestion, setAnswer, saveAnswer, speak, nextQuestion]);
+        setWaitingForContinue(true);
+    }, [pendingAnswer, currentQuestion, setAnswer, saveAnswer, speak]);
 
     const cancelAnswer = useCallback(() => {
         setPendingAnswer(null);
@@ -129,34 +149,21 @@ export default function ExamPage() {
         speak('Cancelled.');
     }, [speak]);
 
-    const [isConfirmingOpenEnded, setIsConfirmingOpenEnded] = useState(false);
 
     const handleOpenEndedSubmit = async () => {
         if (!currentQuestion || !openEndedText.trim()) return;
-        setIsConfirmingOpenEnded(true);
-        speak(`Your answer is recorded as: ${openEndedText}. Do you want to submit this answer?`);
-        showFeedback('❓ Reviewing Answer');
+        const text = openEndedText;
+        setAnswer(currentQuestion.id, text);
+        await saveAnswer(currentQuestion.id, text);
+        speak('Answer recorded, please wait for teacher review.');
+        showFeedback('<i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher...');
+        setOpenEndedText('');
+        // advance after short delay
+        setTimeout(() => nextQuestion(), 1000);
     };
 
-    const confirmOpenEnded = useCallback(async () => {
-        if (!currentQuestion || !openEndedText) return;
-        setAnswer(currentQuestion.id, openEndedText);
-        await saveAnswer(currentQuestion.id, openEndedText);
-        speak('Answer saved.');
-        showFeedback('✅ Answer saved');
-        setOpenEndedText('');
-        setIsConfirmingOpenEnded(false);
-        // Wait 1 second before moving to next question as requested
-        setTimeout(() => {
-            nextQuestion();
-        }, 1000);
-    }, [currentQuestion, openEndedText, setAnswer, saveAnswer, speak, nextQuestion]);
 
-    const cancelOpenEnded = useCallback(() => {
-        setIsConfirmingOpenEnded(false);
-        speak('Answer not saved. You can speak to correct your answer now.');
-        showFeedback('✏️ Editing');
-    }, [speak]);
+
 
     const handleFinish = async () => {
         try {
@@ -173,192 +180,161 @@ export default function ExamPage() {
         }
     };
 
-    const handleVoiceDictation = useCallback((text) => {
-        if (currentQuestion && currentQuestion.type === 'open-ended') {
-            setOpenEndedText(prev => (prev ? prev + ' ' + text : text));
-            showFeedback('🎤 Dictating...');
+
+
+    // auto-save typed open-ended answers after user pauses
+    useEffect(() => {
+        if (currentQuestion && currentQuestion.type === 'open-ended' && openEndedText.trim()) {
+            // schedule save 1.5s after typing stops
+            if (dictationSaveTimer.current) clearTimeout(dictationSaveTimer.current);
+            dictationSaveTimer.current = setTimeout(async () => {
+                const text = openEndedText;
+                setAnswer(currentQuestion.id, text);
+                await saveAnswer(currentQuestion.id, text);
+                speak('Answer recorded, please wait for teacher review.');
+                showFeedback('<i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher...');
+                setOpenEndedText('');
+                setTimeout(() => nextQuestion(), 1000);
+            }, 1500);
         }
-    }, [currentQuestion]);
+        // cleanup on unmount or when question changes
+        return () => {
+            if (dictationSaveTimer.current) clearTimeout(dictationSaveTimer.current);
+        };
+    }, [openEndedText, currentQuestion, saveAnswer, setAnswer, speak, showFeedback, nextQuestion]);
 
-    // Voice command map
+    const handleVoiceDictation = useCallback((text) => {
+        const cleaned = text.trim();
+
+        // quick help keywords
+        const lower = cleaned.toLowerCase();
+        if (/\b(understand|help|nervous|anxious|what does)\b/.test(lower)) {
+            requestHelp(cleaned);
+            return;
+        }
+
+        if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
+
+        // accumulate transcript for 60s window
+        setOpenEndedText(prev => (prev ? `${prev} ${cleaned}` : cleaned));
+        setPendingDictation(prev => (prev ? `${prev} ${cleaned}` : cleaned));
+
+        // start 60s capture window once
+        if (!dictationTimeoutRef.current) {
+            dictationTimeoutRef.current = setTimeout(() => {
+                dictationTimeoutRef.current = null;
+                setWaitingAnswerConfirm(true);
+                speak('I captured your answer. Is it correct? Say Yes or No.');
+            }, 60000);
+        }
+    }, [currentQuestion, requestHelp, speak]);
+
     const commandMap = {
-        // --- Navigation ---
-        'next': () => nextQuestion(),
-        'go next': () => nextQuestion(),
-        'go to next': () => nextQuestion(),
-        'next question': () => nextQuestion(),
-        'go forward': () => nextQuestion(),
-        'move next': () => nextQuestion(),
-        'continue': () => nextQuestion(),
+        // navigation
+        'next': () => {
+            setWaitingNextConfirm(false);
+            nextQuestion();
+        },
+        'previous': () => prevQuestion(),
+        'back': () => prevQuestion(),
+        'again': () => { if (currentQuestion) speakQuestion(currentQuestion); },
+        'repeat question': () => { if (currentQuestion) speakQuestion(currentQuestion); },
 
-        'back': () => {
-            if (currentIndex > 0) {
-                speak('Going back.', { rate: 1.3 });
-                prevQuestion();
-            } else {
-                speak('This is the first question.');
-            }
-        },
-        'go back': () => {
-            if (currentIndex > 0) {
-                speak('Going back.', { rate: 1.3 });
-                prevQuestion();
-            }
-        },
-        'previous': () => {
-            if (currentIndex > 0) {
-                speak('Previous question.', { rate: 1.3 });
-                prevQuestion();
-            }
-        },
-        'previous question': () => {
-            if (currentIndex > 0) {
-                speak('Previous question.', { rate: 1.3 });
-                prevQuestion();
-            }
-        },
-        'take me back': () => prevQuestion(),
-        'move back': () => prevQuestion(),
-
-        'repeat': () => speakQuestion(currentQuestion),
-        'repeat question': () => speakQuestion(currentQuestion),
-        'what is the question': () => speakQuestion(currentQuestion),
-        'read again': () => speakQuestion(currentQuestion),
-        'again': () => speakQuestion(currentQuestion),
-        'say again': () => speakQuestion(currentQuestion),
-
-        'skip': () => nextQuestion(),
-        'skip question': () => nextQuestion(),
-        'skip this': () => nextQuestion(),
-
-        'where am i': () => {
-            const part = currentQuestion?.sectionId === sections[0]?._id ? '1' : currentQuestion?.sectionId === sections[1]?._id ? '2' : '3';
-            speak(`You are in Part ${part}, question ${currentQuestionIndex + 1}.`);
-        },
-        'what question am i on': () => speak(`You are on question ${currentQuestionIndex + 1}.`),
-
-        'go to part 1': () => {
-            const idx = questions.findIndex(q => q.sectionId === sections[0]?._id);
-            if (idx >= 0) { goToQuestion(idx); speak('Opening Part 1.'); }
-        },
-        'go to part 2': () => {
-            const idx = questions.findIndex(q => q.sectionId === sections[1]?._id);
-            if (idx >= 0) { goToQuestion(idx); speak('Opening Part 2.'); }
-        },
-        'go to part 3': () => {
-            const idx = questions.findIndex(q => q.sectionId === sections[2]?._id);
-            if (idx >= 0) { goToQuestion(idx); speak('Opening Part 3.'); }
-        },
-        'unanswered questions': () => goToFirstUnanswered(),
-
-        // --- Answering ---
-        'save': () => handleOpenEndedSubmit(),
-        'save answer': () => handleOpenEndedSubmit(),
-        'save answers': () => handleOpenEndedSubmit(),
-        'submit my answer': () => handleOpenEndedSubmit(),
-
-        'clear': () => {
-            if (currentQuestion?.type === 'open-ended') {
-                setOpenEndedText('');
-                speak('Answer cleared. Speak again.');
-            }
-        },
-        'clear answer': () => {
-            if (currentQuestion?.type === 'open-ended') {
-                setOpenEndedText('');
-                speak('Answer cleared. Speak again.');
-            }
-        },
-
-        'how many remaining': () => {
-            const rem = unansweredQuestions.length;
-            speak(rem === 0 ? 'All questions answered.' : `You have ${rem} unanswered questions.`);
-        },
-
-        'finish': () => {
-            setShowFinishModal(true); // Show immediately
-            const rem = unansweredQuestions.length;
-            if (rem > 0) {
-                // Concise warning
-                speak(`${rem} unanswered. Submit? Yes or No?`, { rate: 1.3 });
-            } else {
-                // Fast confirmation
-                speak('Submit exam? Yes or No?', { rate: 1.3 });
-            }
-        },
-        'finish exam': () => {
-            setShowFinishModal(true);
-            speak('Submit? Yes or No?', { rate: 1.3 });
-        },
-        'submit exam': () => {
-            setShowFinishModal(true);
-            speak('Submit? Yes or No?', { rate: 1.3 });
-        },
-        'submit my answers': () => {
-            setShowFinishModal(true);
-            speak('Submit? Yes or No?', { rate: 1.3 });
-        },
-
+        // option selection (handled by useVoiceCommands internal 'option' regex)
         'option': (letter) => selectOption(letter),
 
-        // Explicit single letter commands for speed
-        'a': () => selectOption('A'),
-        'b': () => selectOption('B'),
-        'c': () => selectOption('C'),
-        'd': () => selectOption('D'),
-
-        'answer a': () => selectOption('A'),
-        'answer b': () => selectOption('B'),
-        'answer c': () => selectOption('C'),
-        'answer d': () => selectOption('D'),
-
-        'select a': () => selectOption('A'),
-        'select b': () => selectOption('B'),
-        'select c': () => selectOption('C'),
-        'select d': () => selectOption('D'),
+        // yes/no handlers for confirmations
         'yes': () => {
-            if (showFinishModal) { setShowFinishModal(false); handleFinish(); }
-            else if (isConfirmingOpenEnded) confirmOpenEnded();
-            else if (showConfirm) confirmAnswer();
-            else if (currentQuestion && answers[currentQuestion.id]) {
-                nextQuestion();
+            if (waitingAnswerConfirm && currentQuestion?.type === 'open-ended') {
+                setWaitingAnswerConfirm(false);
+                if (dictationTimeoutRef.current) {
+                    clearTimeout(dictationTimeoutRef.current);
+                    dictationTimeoutRef.current = null;
+                }
+                setAnswer(currentQuestion.id, pendingDictation);
+                saveAnswer(currentQuestion.id, pendingDictation);
+                // if last question, prompt finish; else go next
+                if (currentIndex === questions.length - 1) {
+                    setWaitingFinishConfirm(true);
+                    speak('Answer saved. This was the last question. Finish exam now? Say Yes or No.');
+                } else {
+                    speak('Answer saved. Go to next question? Say Yes or No.');
+                    setWaitingNextConfirm(true);
+                }
+                return;
             }
-        },
-        'confirm': () => {
-            if (showFinishModal) { setShowFinishModal(false); handleFinish(); }
-            else if (isConfirmingOpenEnded) confirmOpenEnded();
-            else if (showConfirm) confirmAnswer();
-            else if (currentQuestion && answers[currentQuestion.id]) {
+            if (showConfirm && pendingAnswer) {
+                confirmAnswer();
+                setWaitingNextConfirm(true);
+                speak('Answer recorded. Go to next question? Say Yes or No.');
+                return;
+            }
+            if (waitingNextConfirm) {
+                setWaitingNextConfirm(false);
                 nextQuestion();
+                return;
+            }
+            if (waitingFinishConfirm) {
+                setWaitingFinishConfirm(false);
+                handleFinish();
+                return;
+            }
+            if (waitingUnansweredDecision) {
+                setWaitingUnansweredDecision(false);
+                goToFirstUnanswered();
+                return;
             }
         },
         'no': () => {
-            if (showFinishModal) { setShowFinishModal(false); speak('Continuing.'); }
-            else if (isConfirmingOpenEnded) cancelOpenEnded();
-            else if (showConfirm) cancelAnswer();
-            else if (currentQuestion && answers[currentQuestion.id]) {
-                speak('Answer cancelled. Choose another option.');
+            if (waitingAnswerConfirm) {
+                setWaitingAnswerConfirm(false);
+                speak('Okay, please say your answer again.');
+                setOpenEndedText('');
+                return;
+            }
+            if (waitingNextConfirm) {
+                setWaitingNextConfirm(false);
+                speak('Staying on this question.');
+                return;
+            }
+            if (waitingFinishConfirm) {
+                setWaitingFinishConfirm(false);
+                speak('Submission cancelled.');
+                return;
+            }
+            if (waitingUnansweredDecision) {
+                setWaitingUnansweredDecision(false);
+                speak('Please answer the remaining questions before finishing.');
+                return;
             }
         },
-        'cancel': () => {
-            if (showFinishModal) { setShowFinishModal(false); speak('Continuing.'); }
-            else if (isConfirmingOpenEnded) cancelOpenEnded();
-            else if (showConfirm) cancelAnswer();
-        },
-        'i don’t understand': () => speak('This question asks ' + currentQuestion?.questionText + '. Simply pick an option or speak your answer.'),
-        'explain': () => speak('This question asks ' + currentQuestion?.questionText + '. Simply pick an option or speak your answer.')
+
+        // finish
+        'finish': () => {
+            if (unansweredQuestions.length > 0) {
+                setWaitingUnansweredDecision(true);
+                speak(`You still have ${unansweredQuestions.length} unanswered questions. Should I take you to the first one? Say Yes or No.`);
+            } else {
+                setWaitingFinishConfirm(true);
+                speak('Finish the exam now? Say Yes or No.');
+            }
+        }
     };
 
-    const { isListening, lastCommand, startListening, stopListening, toggleListening } = useVoiceCommands(commandMap, true, handleVoiceDictation);
+    const { isListening, transcript, lastCommand, startListening, stopListening, toggleListening } = useVoiceCommands(commandMap, true, handleVoiceDictation);
 
+    // Read question aloud when it changes
     useEffect(() => {
-        if (isConfirmingOpenEnded) {
-            // We are confirming, so we should probably stop theRecognition from picking up dictation
-            // but useVoiceCommands already handles it since processCommand is called first.
+        if (currentQuestion) {
+            const text = currentQuestion.questionText +
+                (currentQuestion.options && currentQuestion.options.length
+                    ? '. Options: ' + currentQuestion.options.map(o => `${o.label}, ${o.text}`).join('. ') + '.'
+                    : '');
+            speak(text);
         }
-    }, [isConfirmingOpenEnded]);
+    }, [currentQuestion, speak]);
 
-    // Start listening when page loads
+    // Start voice listening on load
     useEffect(() => {
         startListening();
         return () => stopListening();
@@ -388,22 +364,17 @@ export default function ExamPage() {
             {/* Top bar */}
             <div className="navbar">
                 <div className="navbar-brand">
-                    <span className="icon">📝</span>
+                    <span className="icon" aria-hidden="true"><i className="fa-solid fa-clipboard-list"></i></span>
                     {exam.title}
                 </div>
                 <div className="navbar-actions">
-                    <div className={`voice-indicator ${isListening ? 'listening' : ''}`}>
-                        <div className="voice-dot"></div>
-                        {isListening ? 'Listening...' : 'Mic Off'}
-                    </div>
-                    <button className="btn btn-sm btn-secondary" onClick={toggleListening}>
-                        {isListening ? '🔇 Mute' : '🎤 Listen'}
-                    </button>
                     <div className={`timer ${timerClass}`}>
-                        ⏱️ {formatTime(timeRemaining)}
+                        <i className="fa-solid fa-stopwatch" aria-hidden="true"></i> {formatTime(timeRemaining)}
                     </div>
                 </div>
             </div>
+
+            {/* Voice commands active; instructions removed for brevity */}
 
             <div className="app-container" style={{ paddingTop: 24 }}>
                 {/* Progress */}
@@ -482,12 +453,18 @@ export default function ExamPage() {
                                     rows={6}
                                     aria-label="Your answer"
                                 />
+                        {/* realtime transcript display */}
+                        {transcript && currentQuestion.type === 'open-ended' && (
+                            <div style={{ marginTop: 8, fontSize: 'var(--font-size-sm)', color: '#555' }}>
+                                Heard: {transcript}
+                            </div>
+                        )}
                                 <div className="flex gap-sm mt-md">
                                     <button className="btn btn-primary" onClick={handleOpenEndedSubmit}>
-                                        💾 Save Answer
+                                        <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Answer
                                     </button>
-                                    <button className="btn btn-secondary" onClick={() => speak('You can type your answer or speak it. Click save when done.')}>
-                                        🎤 Voice Hint
+                                    <button className="btn btn-secondary" onClick={() => speak('You can type your answer or speak it. The answer will save automatically when you pause.')}>
+                                        <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> Voice Hint
                                     </button>
                                 </div>
                             </div>
@@ -495,8 +472,15 @@ export default function ExamPage() {
 
                         {/* Answer confirmation */}
                         {answers[currentQuestion.id] && (
-                            <div className="badge badge-success mt-md" style={{ padding: 12 }}>
-                                ✅ Current answer: {answers[currentQuestion.id]}
+                            <div>
+                                <div className="badge badge-success mt-md" style={{ padding: 12 }}>
+                                    <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Current answer: {answers[currentQuestion.id]}
+                                </div>
+                                {currentQuestion.type === 'open-ended' && (
+                                    <div className="badge badge-warning mt-sm" style={{ padding: 8 }}>
+                                        <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher review...
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -510,11 +494,11 @@ export default function ExamPage() {
                         disabled={currentIndex === 0}
                         aria-label="Previous Question"
                     >
-                        ⬅️ Previous
+                        <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous
                     </button>
                     <div className="flex gap-sm">
                         <button className="btn btn-secondary" onClick={() => { if (currentQuestion) speakQuestion(currentQuestion); }}>
-                            🔊 Repeat
+                            <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Repeat
                         </button>
                         <button className="btn btn-danger" onClick={() => {
                             if (unansweredQuestions.length > 0) {
@@ -522,7 +506,7 @@ export default function ExamPage() {
                             }
                             setShowFinishModal(true);
                         }}>
-                            🏁 Finish
+                            <i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish
                         </button>
                     </div>
                     <button
@@ -531,14 +515,14 @@ export default function ExamPage() {
                         disabled={currentIndex === questions.length - 1}
                         aria-label="Next Question"
                     >
-                        Next ➡️
+                        Next <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
                     </button>
                 </div>
 
                 {/* TTS Speed Control */}
                 <div className="card mt-lg" style={{ padding: 16 }}>
                     <div className="flex items-center gap-md">
-                        <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>🔊 Speech Speed:</span>
+                        <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}><i className="fa-solid fa-volume-high" aria-hidden="true"></i> Speech Speed:</span>
                         <input
                             type="range"
                             min="0.5"
@@ -561,8 +545,8 @@ export default function ExamPage() {
                         <h2>Confirm Answer</h2>
                         <p>You selected <strong>Option {pendingAnswer}</strong>. Confirm?</p>
                         <div className="modal-actions">
-                            <button className="btn btn-secondary" onClick={cancelAnswer}>❌ No</button>
-                            <button className="btn btn-primary" onClick={confirmAnswer}>✅ Yes</button>
+                            <button className="btn btn-secondary" onClick={cancelAnswer}><i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> No</button>
+                            <button className="btn btn-primary" onClick={confirmAnswer}><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Yes</button>
                         </div>
                         <p className="text-muted mt-md" style={{ fontSize: 'var(--font-size-sm)' }}>
                             Say &quot;Yes&quot; or &quot;No&quot;
@@ -575,22 +559,22 @@ export default function ExamPage() {
             {showFinishModal && (
                 <div className="modal-overlay" role="dialog" aria-modal="true">
                     <div className="modal">
-                        <h2>🏁 Finish Exam?</h2>
+                        <h2><i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish Exam?</h2>
                         {unansweredQuestions.length > 0 && (
                             <p style={{ color: 'var(--warning)', fontWeight: 600, marginBottom: 12 }}>
-                                ⚠️ You have {unansweredQuestions.length} unanswered question{unansweredQuestions.length !== 1 ? 's' : ''}.
+                                <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> You have {unansweredQuestions.length} unanswered question{unansweredQuestions.length !== 1 ? 's' : ''}.
                             </p>
                         )}
                         <p>Are you sure you want to submit? This cannot be undone.</p>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => { setShowFinishModal(false); speak('Continuing exam.'); }}>
-                                ❌ No, Continue
+                                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> No, Continue
                             </button>
                             <button className="btn btn-secondary" onClick={() => { setShowFinishModal(false); goToFirstUnanswered(); speak('Going to unanswered questions.'); }}>
-                                🔄 Review Unanswered
+                                <i className="fa-solid fa-list-check" aria-hidden="true"></i> Review Unanswered
                             </button>
                             <button className="btn btn-danger" onClick={() => { setShowFinishModal(false); handleFinish(); }}>
-                                ✅ Yes, Submit
+                                <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Yes, Submit
                             </button>
                         </div>
                         <p className="text-muted mt-md" style={{ fontSize: 'var(--font-size-sm)' }}>
@@ -604,3 +588,4 @@ export default function ExamPage() {
         </div>
     );
 }
+

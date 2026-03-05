@@ -5,6 +5,8 @@ const studentSchema = new mongoose.Schema({
     studentId: { type: String, required: true, unique: true, trim: true },
     email: { type: String, trim: true },
     examCodes: [{ type: String }],
+    classId: { type: mongoose.Schema.Types.ObjectId, ref: 'Classroom', default: null },
+    facultyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Faculty', default: null },
     accessibilitySettings: {
         highContrast: { type: Boolean, default: true },
         fontSize: { type: String, enum: ['normal', 'large', 'x-large'], default: 'large' },

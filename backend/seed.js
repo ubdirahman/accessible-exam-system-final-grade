@@ -29,9 +29,11 @@ async function seed() {
         const admin = await Admin.create({
             name: 'System Admin',
             email: 'admin@gmail.com',
-            password: 'admin123'
+            // default password changed to match user request
+            password: '123456',
+            role: 'super_admin'
         });
-        console.log('Admin created: admin@gmail.com / admin123');
+        console.log('Admin created: admin@gmail.com / 123456');
 
         // Create students
         const students = await Student.insertMany([

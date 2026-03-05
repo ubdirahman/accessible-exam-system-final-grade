@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
-const { verifyToken, requireAdmin, requireStudent } = require('../middleware/auth');
+const mongoose = require('mongoose');
+const { verifyToken, requireAdmin, requireStudent, requireAdminOrTeacher } = require('../middleware/auth');
 const Exam = require('../models/Exam');
 const Section = require('../models/Section');
 const Question = require('../models/Question');
@@ -12,21 +13,126 @@ const axios = require('axios');
 
 const router = express.Router();
 
+// Resolve faculty for writes based on caller role
+function resolveFacultyId(req) {
+    if (req.user.role === 'admin') return req.user.facultyId;
+    if (req.user.role === 'teacher') return req.user.facultyId;
+    return req.body.facultyId || req.user.facultyId || null;
+}
+
+// Ensure the caller is allowed to access a specific exam
+async function loadExamIfAllowed(user, examId) {
+    const exam = await Exam.findById(examId);
+    if (!exam) return null;
+    if (user.role === 'super_admin') return exam;
+    if (user.role === 'admin' && exam.facultyId && exam.facultyId.toString() === String(user.facultyId)) return exam;
+    if (user.role === 'teacher' && exam.createdBy && exam.createdBy.toString() === String(user.id)) return exam;
+    return null;
+}
+
+// Helper: recompute result totals after grading updates
+async function recomputeResult(examId, studentId) {
+    try {
+        const questions = await Question.find({ examId });
+        const responses = await Response.find({ examId, studentId });
+
+        const totalPoints = questions.reduce((sum, q) => sum + (q.points || 0), 0);
+        let score = 0;
+        let correctCount = 0;
+        let wrongCount = 0;
+        let skippedCount = 0;
+
+        questions.forEach(q => {
+            const resp = responses.find(r => r.questionId && r.questionId.toString() === q._id.toString());
+            const hasAnswer = resp && (resp.selectedAnswer != null && resp.selectedAnswer !== '' || resp.autoGraded || resp.manuallyGraded);
+            if (!resp || !hasAnswer) {
+                skippedCount += 1;
+                return;
+            }
+            if (resp.isCorrect === true) {
+                correctCount += 1;
+                score += resp.score != null ? resp.score : q.points || 0;
+            } else if (resp.isCorrect === false) {
+                wrongCount += 1;
+                score += resp.score || 0;
+            } else {
+                // Ungraded manual question: keep in skipped/pending bucket
+                skippedCount += 1;
+            }
+        });
+
+        const existing = await Result.findOne({ examId, studentId });
+        const timeTaken = existing?.timeTaken || 0;
+        const submittedAt = existing?.submittedAt || new Date();
+
+        await Result.findOneAndUpdate(
+            { examId, studentId },
+            {
+                score,
+                totalPoints,
+                correctCount,
+                wrongCount,
+                skippedCount,
+                timeTaken,
+                submittedAt,
+                locked: true
+            },
+            { upsert: true, new: true }
+        );
+    } catch (err) {
+        console.error('Recompute result failed', err);
+        // do not throw to avoid breaking grading call; leave existing totals unchanged
+    }
+}
+
 /* ============================================================
    ADMIN ROUTES
    ============================================================ */
 
-// POST /api/exams — Create exam
-router.post('/', verifyToken, requireAdmin, async (req, res) => {
+// POST /api/exams — Create exam (admin or teacher)
+router.post('/', verifyToken, requireAdminOrTeacher, async (req, res) => {
     try {
-        const { title, description, timeLimit, sections: sectionsData } = req.body;
+        const { title, description, timeLimit, sections: sectionsData, active = false, classId, subjectId } = req.body;
+        const facultyId = resolveFacultyId(req);
+        if (!facultyId) {
+            return res.status(400).json({ message: 'facultyId is required to create an exam.' });
+        }
+
+        let finalClassId = classId || null;
+        // teachers default to their class if not provided
+        if (req.user.role === 'teacher' && !finalClassId) {
+            finalClassId = req.user.classId || null;
+        }
+
+        if (subjectId) {
+            const Subject = require('../models/Subject');
+            const subj = await Subject.findOne({ _id: subjectId, facultyId });
+            if (!subj) return res.status(400).json({ message: 'Subject not found for this faculty.' });
+            if (req.user.role === 'teacher' && subj.teacherId?.toString() !== req.user.id) {
+                return res.status(403).json({ message: 'You can only create exams for your own subjects.' });
+            }
+            // align class with subject if subject has one
+            if (subj.classId) {
+                finalClassId = subj.classId.toString();
+            }
+        }
+
+        if (finalClassId) {
+            const Classroom = require('../models/Classroom');
+            const klass = await Classroom.findOne({ _id: finalClassId, facultyId });
+            if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
+        }
 
         const exam = await Exam.create({
             title,
             description,
             timeLimit,
             createdBy: req.user.id,
-            active: false,
+            facultyId,
+            classId: finalClassId,
+            subjectId: subjectId || null,
+            // teachers cannot activate exams; admins/super_admins can
+            active: req.user.role === 'teacher' ? false : !!active,
             examCodes: []
         });
 
@@ -51,7 +157,7 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
                             type: q.type,
                             questionText: q.questionText,
                             options: q.options || [],
-                            correctAnswer: q.correctAnswer,
+                            correctAnswer: q.type === 'open-ended' ? '' : q.correctAnswer,
                             points: q.points || 1,
                             order: j + 1
                         });
@@ -68,10 +174,11 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
     }
 });
 
-// GET /api/exams — List all exams
+// GET /api/exams — List all exams (admin only)
 router.get('/', verifyToken, requireAdmin, async (req, res) => {
     try {
-        const exams = await Exam.find().populate('sections').sort({ createdAt: -1 });
+        const query = req.user.role === 'admin' ? { facultyId: req.user.facultyId } : {};
+        const exams = await Exam.find(query).populate('sections').sort({ createdAt: -1 });
         console.log(`[DEBUG] Found ${exams.length} exams in database.`);
         res.json(exams);
     } catch (error) {
@@ -80,11 +187,39 @@ router.get('/', verifyToken, requireAdmin, async (req, res) => {
     }
 });
 
+// GET /api/exams/participation/summary - participant counts per exam (admin/teacher)
+router.get('/participation/summary', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const baseQuery = req.user.role === 'admin'
+            ? { facultyId: req.user.facultyId }
+            : req.user.role === 'teacher'
+                ? { createdBy: req.user.id }
+                : {};
+        const exams = await Exam.find(baseQuery).select('_id title facultyId classId');
+        const summaries = await Promise.all(exams.map(async (exam) => {
+            const participants = await Response.find({ examId: exam._id }).distinct('studentId');
+            return {
+                examId: exam._id,
+                title: exam.title,
+                participants: participants.length
+            };
+        }));
+        res.json(summaries);
+    } catch (error) {
+        console.error('Participation summary error:', error);
+        res.status(500).json({ message: 'Error fetching participation summary.' });
+    }
+});
+
+// Admin routes moved here
 // GET /api/exams/students — List all students (Admin)
 // MOVED UP to avoid conflict with /:id
 router.get('/students', verifyToken, requireAdmin, async (req, res) => {
     try {
-        const students = await Student.find().sort({ createdAt: -1 });
+        const query = req.user.role === 'admin'
+            ? { facultyId: req.user.facultyId }
+            : (req.query.facultyId ? { facultyId: req.query.facultyId } : {});
+        const students = await Student.find(query).sort({ createdAt: -1 });
         console.log(`[DEBUG] Found ${students.length} students in database.`);
         res.json(students);
     } catch (error) {
@@ -94,11 +229,144 @@ router.get('/students', verifyToken, requireAdmin, async (req, res) => {
     }
 });
 
+// ---------- TEACHER-SPECIFIC HELPERS ----------
+// GET /api/exams/my - exams created by current user (admin or teacher)
+router.get('/my', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const exams = await Exam.find({ createdBy: req.user.id }).populate('sections').sort({ createdAt: -1 });
+        res.json(exams);
+    } catch (error) {
+        console.error('Error fetching my exams:', error);
+        res.status(500).json({ message: 'Error fetching exams.' });
+    }
+});
+
+// GET /api/exams/my/students - unique students who have participated in the caller's exams
+router.get('/my/students', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const myExams = await Exam.find({ createdBy: req.user.id }).select('_id');
+        const examIds = myExams.map(e => e._id);
+        const responses = await Response.find({ examId: { $in: examIds } }).select('studentId');
+        const unique = [...new Set(responses.map(r => r.studentId))];
+        const students = await Student.find({ studentId: { $in: unique } });
+        res.json(students);
+    } catch (error) {
+        console.error('Error fetching my students:', error);
+        res.status(500).json({ message: 'Error fetching students.' });
+    }
+});
+
+// GET /api/exams/:examId/students - list students who have interacted with a particular exam
+router.get('/:examId/students', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const examId = req.params.examId;
+        const exam = await loadExamIfAllowed(req.user, examId);
+        if (!exam) return res.status(403).json({ message: 'Access denied for this exam.' });
+
+        // include students who started the exam (activity log) even if no responses yet
+        const responses = await Response.find({ examId }).select('studentId');
+        const started = await ActivityLog.find({ examId, action: 'exam_started' }).select('studentId');
+        const uniqueIds = [
+            ...new Set([
+                ...responses.map(r => r.studentId),
+                ...started.map(l => l.studentId)
+            ])
+        ];
+        const students = await Student.find({ studentId: { $in: uniqueIds } });
+        res.json(students);
+    } catch (error) {
+        console.error('Error fetching exam students:', error);
+        res.status(500).json({ message: 'Error fetching students.' });
+    }
+});
+
+// GET /api/exams/:examId/students/:studentId/responses - return student's responses + question data
+router.get('/:examId/students/:studentId/responses', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const { examId, studentId } = req.params;
+        const exam = await loadExamIfAllowed(req.user, examId);
+        if (!exam) return res.status(403).json({ message: 'Access denied for this exam.' });
+        const questions = await Question.find({ examId }).sort({ order: 1 });
+        const responses = await Response.find({ examId, studentId });
+        res.json({ questions, responses });
+    } catch (error) {
+        console.error('Error fetching student responses:', error);
+        res.status(500).json({ message: 'Error fetching responses.' });
+    }
+});
+
+// PUT /api/exams/:examId/students/:studentId/responses/:responseId
+// teacher or admin can update correctness, score, feedback
+router.put('/:examId/students/:studentId/responses/:responseId', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const { examId, studentId, responseId } = req.params;
+        const exam = await loadExamIfAllowed(req.user, examId);
+        if (!exam) return res.status(403).json({ message: 'Access denied for this exam.' });
+        // only accept grading fields, questionId is optional to allow creating a missing response
+        const updates = (({ isCorrect, teacherFeedback, questionId }) => ({ isCorrect, teacherFeedback, questionId }))(req.body);
+        updates.manuallyGraded = true;
+
+        let response = mongoose.isValidObjectId(responseId) ? await Response.findById(responseId) : null;
+
+        // if response doesn't exist, allow creation (for skipped questions)
+        if (!response) {
+            if (!updates.questionId || !mongoose.isValidObjectId(updates.questionId)) {
+                return res.status(400).json({ message: 'Response not found and questionId missing.' });
+            }
+            response = new Response({
+                studentId,
+                examId,
+                questionId: updates.questionId,
+                selectedAnswer: '',
+                answeredAt: new Date()
+            });
+        }
+
+        const question = await Question.findById(response.questionId);
+        if (!question) return res.status(404).json({ message: 'Question not found.' });
+
+        updates.score = updates.isCorrect ? (question.points || 1) : 0;
+
+        response.isCorrect = updates.isCorrect;
+        response.score = updates.score;
+        response.teacherFeedback = updates.teacherFeedback;
+        response.manuallyGraded = true;
+        response.autoGraded = false;
+        response.selectedAnswer = response.selectedAnswer || ''; // keep blank if none
+        await response.save();
+
+        // log grading event so admin corrections are audited
+        await ActivityLog.create({
+            studentId,
+            examId,
+            action: 'graded_response',
+            questionId: response.questionId,
+            details: `Marked ${updates.isCorrect ? 'correct' : 'incorrect'} by ${req.user.role} ${req.user.name || req.user.email}`
+        });
+
+        // Refresh aggregated result so students/admin see updated counts
+        await recomputeResult(examId, studentId);
+
+        res.json(response);
+    } catch (error) {
+        console.error('Error updating response:', error);
+        res.status(500).json({ message: 'Error updating response.' });
+    }
+});
+
+
 // GET /api/exams/:id — Get single exam with sections + questions
 router.get('/:id', verifyToken, async (req, res) => {
     try {
         const exam = await Exam.findById(req.params.id).populate('sections');
         if (!exam) return res.status(404).json({ message: 'Exam not found.' });
+
+        if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
+            return res.status(403).json({ message: 'Access denied for this faculty.' });
+        }
+        if (req.user.role === 'teacher' && exam.createdBy && exam.createdBy.toString() !== String(req.user.id)) {
+            return res.status(403).json({ message: 'Not authorized to view this exam.' });
+        }
 
         const questions = await Question.find({ examId: exam._id }).sort({ order: 1 });
         res.json({ exam, questions });
@@ -107,26 +375,76 @@ router.get('/:id', verifyToken, async (req, res) => {
     }
 });
 
-// PUT /api/exams/:id — Update exam
-router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
+// PUT /api/exams/:id — Update exam (admin or teacher can edit; teacher only their own)
+router.put('/:id', verifyToken, requireAdminOrTeacher, async (req, res) => {
     try {
-        const { title, description, timeLimit, active } = req.body;
-        const exam = await Exam.findByIdAndUpdate(
-            req.params.id,
-            { title, description, timeLimit, active },
-            { new: true }
-        );
+        const { title, description, timeLimit, active, classId, subjectId } = req.body;
+        const exam = await Exam.findById(req.params.id);
         if (!exam) return res.status(404).json({ message: 'Exam not found.' });
+        if (req.user.role === 'teacher' && exam.createdBy.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to modify this exam.' });
+        }
+        if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
+            return res.status(403).json({ message: 'Access denied for this faculty.' });
+        }
+        exam.title = title;
+        exam.description = description;
+        exam.timeLimit = timeLimit;
+        if (req.user.role !== 'teacher') {
+            exam.active = active;
+            if (classId) {
+                const Classroom = require('../models/Classroom');
+                const klass = await Classroom.findOne({ _id: classId, facultyId: exam.facultyId });
+                if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
+                exam.classId = classId;
+            }
+            if (subjectId) {
+                const Subject = require('../models/Subject');
+                const subj = await Subject.findOne({ _id: subjectId, facultyId: exam.facultyId });
+                if (!subj) return res.status(400).json({ message: 'Subject not found for this faculty.' });
+                exam.subjectId = subjectId;
+                if (subj.classId) {
+                    exam.classId = subj.classId;
+                }
+            }
+        }
+        await exam.save();
         res.json({ message: 'Exam updated.', exam });
     } catch (error) {
         res.status(500).json({ message: 'Error updating exam.' });
     }
 });
 
-// DELETE /api/exams/:id — Delete exam and related data
-router.delete('/:id', verifyToken, requireAdmin, async (req, res) => {
+// PATCH /api/exams/:id/active — toggle active status (admin/super_admin only)
+router.patch('/:id/active', verifyToken, requireAdmin, async (req, res) => {
+    try {
+        const { active } = req.body;
+        const exam = await Exam.findById(req.params.id);
+        if (!exam) return res.status(404).json({ message: 'Exam not found.' });
+        if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
+            return res.status(403).json({ message: 'Access denied for this faculty.' });
+        }
+        exam.active = !!active;
+        await exam.save();
+        res.json({ message: `Exam ${exam.active ? 'activated' : 'deactivated'}.`, exam });
+    } catch (error) {
+        console.error('Active toggle error:', error);
+        res.status(500).json({ message: 'Error updating active status.' });
+    }
+});
+
+// DELETE /api/exams/:id — Delete exam and related data (admin or owner teacher)
+router.delete('/:id', verifyToken, requireAdminOrTeacher, async (req, res) => {
     try {
         const examId = req.params.id;
+        const exam = await Exam.findById(examId);
+        if (!exam) return res.status(404).json({ message: 'Exam not found.' });
+        if (req.user.role === 'teacher' && exam.createdBy.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'Not authorized to delete this exam.' });
+        }
+        if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
+            return res.status(403).json({ message: 'Access denied for this faculty.' });
+        }
         await Question.deleteMany({ examId });
         await Section.deleteMany({ examId });
         await Response.deleteMany({ examId });
@@ -145,6 +463,9 @@ router.post('/:id/generate-codes', verifyToken, requireAdmin, async (req, res) =
         const { count = 1, expiryHours = 24 } = req.body;
         const exam = await Exam.findById(req.params.id);
         if (!exam) return res.status(404).json({ message: 'Exam not found.' });
+        if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
+            return res.status(403).json({ message: 'Access denied for this faculty.' });
+        }
 
         const codes = [];
         for (let i = 0; i < count; i++) {
@@ -252,26 +573,12 @@ router.post('/:id/answer', verifyToken, requireStudent, async (req, res) => {
         if (question.type === 'mcq' || question.type === 'true-false') {
             response.isCorrect = selectedAnswer.toLowerCase() === question.correctAnswer.toLowerCase();
             response.score = response.isCorrect ? question.points : 0;
+            response.autoGraded = true;
         }
 
-        // Grade open-ended via ML service
-        if (question.type === 'open-ended' && selectedAnswer.trim()) {
-            try {
-                const mlRes = await axios.post(`${process.env.ML_SERVICE_URL}/ml/grade-open-ended`, {
-                    questionId: question._id.toString(),
-                    studentAnswer: selectedAnswer,
-                    referenceAnswer: question.correctAnswer
-                }, { timeout: 15000 });
-
-                response.score = (mlRes.data.score / 100) * question.points;
-                response.mlFeedback = mlRes.data.feedback;
-                response.isCorrect = mlRes.data.score >= 50;
-            } catch (mlError) {
-                console.error('ML grading error:', mlError.message);
-                // Store answer anyway, admin can grade manually
-                response.score = null;
-                response.mlFeedback = 'ML grading unavailable. Pending manual review.';
-            }
+        // Open-ended answers are reviewed manually; skip ML service entirely
+        if (question.type === 'open-ended') {
+            // leave isCorrect/score null until teacher grades
         }
 
         await response.save();
@@ -326,14 +633,18 @@ router.post('/:id/finish', verifyToken, requireStudent, async (req, res) => {
 
         questions.forEach(q => {
             const resp = responses.find(r => r.questionId.toString() === q._id.toString());
-            if (!resp || !resp.selectedAnswer) {
+            const hasAnswer = resp && (resp.selectedAnswer || resp.autoGraded || resp.manuallyGraded);
+            if (!resp || !hasAnswer) {
                 skippedCount++;
-            } else if (resp.isCorrect) {
+            } else if (resp.isCorrect === true) {
                 correctCount++;
                 score += resp.score || 0;
-            } else {
+            } else if (resp.isCorrect === false) {
                 wrongCount++;
                 score += resp.score || 0; // partial credit for open-ended
+            } else {
+                // Pending manual grading; treat as skipped for now
+                skippedCount++;
             }
         });
 
@@ -409,8 +720,18 @@ router.get('/:id/progress', verifyToken, requireStudent, async (req, res) => {
 
 router.post('/students', verifyToken, requireAdmin, async (req, res) => {
     try {
-        const { name, studentId, email } = req.body;
-        const student = await Student.create({ name, studentId, email });
+        const { name, studentId, email, classId, facultyId: bodyFacultyId } = req.body;
+        const facultyId = req.user.role === 'admin' ? req.user.facultyId : (bodyFacultyId || req.user.facultyId);
+        if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
+
+        // optional class validation happens in classRoutes but ensure class belongs to faculty if provided
+        if (classId) {
+            const Classroom = require('../models/Classroom');
+            const klass = await Classroom.findOne({ _id: classId, facultyId });
+            if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
+        }
+
+        const student = await Student.create({ name, studentId, email, facultyId, classId: classId || null });
         res.status(201).json(student);
     } catch (error) {
         if (error.code === 11000) {
@@ -422,10 +743,19 @@ router.post('/students', verifyToken, requireAdmin, async (req, res) => {
 
 router.put('/students/:studentId', verifyToken, requireAdmin, async (req, res) => {
     try {
-        const { name, email, accessibilitySettings } = req.body;
+        const { name, email, accessibilitySettings, facultyId: bodyFacultyId, classId } = req.body;
+        const facultyId = req.user.role === 'admin' ? req.user.facultyId : (bodyFacultyId || req.user.facultyId);
+        if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
+
+        if (classId) {
+            const Classroom = require('../models/Classroom');
+            const klass = await Classroom.findOne({ _id: classId, facultyId });
+            if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
+        }
+
         const student = await Student.findOneAndUpdate(
-            { studentId: req.params.studentId },
-            { name, email, accessibilitySettings },
+            { studentId: req.params.studentId, facultyId },
+            { name, email, accessibilitySettings, classId: classId || null },
             { new: true }
         );
         if (!student) return res.status(404).json({ message: 'Student not found.' });
@@ -437,7 +767,9 @@ router.put('/students/:studentId', verifyToken, requireAdmin, async (req, res) =
 
 router.delete('/students/:studentId', verifyToken, requireAdmin, async (req, res) => {
     try {
-        await Student.findOneAndDelete({ studentId: req.params.studentId });
+        const facultyId = req.user.role === 'admin' ? req.user.facultyId : (req.query.facultyId || req.user.facultyId);
+        if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
+        await Student.findOneAndDelete({ studentId: req.params.studentId, facultyId });
         res.json({ message: 'Student deleted.' });
     } catch (error) {
         res.status(500).json({ message: 'Error deleting student.' });

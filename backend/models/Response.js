@@ -8,6 +8,9 @@ const responseSchema = new mongoose.Schema({
     isCorrect: { type: Boolean, default: null },
     score: { type: Number, default: null },
     mlFeedback: { type: String, default: '' },
+    teacherFeedback: { type: String, default: '' },
+    manuallyGraded: { type: Boolean, default: false },
+    autoGraded: { type: Boolean, default: false },
     answeredAt: { type: Date, default: Date.now },
     modifiedCount: { type: Number, default: 0 }
 });

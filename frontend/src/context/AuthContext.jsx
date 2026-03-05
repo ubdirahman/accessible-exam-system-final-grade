@@ -10,10 +10,26 @@ export function AuthProvider({ children }) {
     useEffect(() => {
         const savedToken = localStorage.getItem('token');
         const savedUser = localStorage.getItem('user');
+
         if (savedToken && savedUser) {
-            setToken(savedToken);
-            setUser(JSON.parse(savedUser));
+            try {
+                const parsed = JSON.parse(savedUser);
+                // make sure we have a valid role property (previous versions omitted it)
+                if (parsed && typeof parsed.role === 'string' && parsed.role.length > 0) {
+                    setToken(savedToken);
+                    setUser(parsed);
+                } else {
+                    // corrupt or legacy user object; clear everything to avoid redirect loops
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                }
+            } catch (e) {
+                console.warn('Failed to parse saved user, clearing auth storage', e);
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+            }
         }
+
         setLoading(false);
     }, []);
 
@@ -37,9 +53,13 @@ export function AuthProvider({ children }) {
         loading,
         login,
         logout,
-        isAuthenticated: !!token,
+        // require both token and a recognized role to be considered authenticated
+        isAuthenticated: !!token && !!user?.role,
         isAdmin: user?.role === 'admin',
-        isStudent: user?.role === 'student'
+        isSuperAdmin: user?.role === 'super_admin',
+        isTeacher: user?.role === 'teacher',
+        isStudent: user?.role === 'student',
+        isAdminOrTeacher: user?.role === 'admin' || user?.role === 'teacher' || user?.role === 'super_admin'
     };
 
     return (

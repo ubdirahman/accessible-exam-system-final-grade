@@ -32,7 +32,12 @@ const requireRole = (...roles) => {
   };
 };
 
-const requireAdmin = requireRole('admin');
+// role helpers
+const requireSuperAdmin = requireRole('super_admin');
+const requireAdmin = requireRole('admin', 'super_admin');
 const requireStudent = requireRole('student');
+const requireTeacher = requireRole('teacher');
+// helper for endpoints accessible to both admins and teachers (and super admins)
+const requireAdminOrTeacher = requireRole('admin', 'teacher', 'super_admin');
 
-module.exports = { verifyToken, requireRole, requireAdmin, requireStudent };
+module.exports = { verifyToken, requireRole, requireAdmin, requireStudent, requireTeacher, requireAdminOrTeacher, requireSuperAdmin };

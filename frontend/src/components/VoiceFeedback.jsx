@@ -15,7 +15,7 @@ export default function VoiceFeedback({ message, duration = 3000 }) {
 
     return (
         <div className="voice-toast" role="alert" aria-live="assertive">
-            🎤 {message}
+            <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> {message}
         </div>
     );
 }
