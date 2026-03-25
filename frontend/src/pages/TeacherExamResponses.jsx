@@ -12,7 +12,7 @@ export default function TeacherExamResponses() {
     const [selectedResp, setSelectedResp] = useState(null);
     const [selectedQ, setSelectedQ] = useState(null);
 
-    // allow admin/teacher to say "correct" or "incorrect" after clicking a response row
+    // allow admin/teacher to say "correct" or "incorrect" after clicking a response row (open-ended only)
     useVoiceCommands({
         correct: () => grade(selectedResp, selectedQ, true),
         incorrect: () => grade(selectedResp, selectedQ, false),
@@ -62,6 +62,9 @@ export default function TeacherExamResponses() {
     };
 
     const grade = async (resp, question, correct) => {
+        if (!resp || !question) return;
+        // MCQ and True/False are auto-graded; skip manual grading
+        if (question.type === 'mcq' || question.type === 'true-false') return;
         const score = correct ? question.points || 1 : 0;
         try {
             await api.put(`/exams/${id}/students/${selected.studentId}/responses/${resp?._id || 'new'}`, {
@@ -144,14 +147,20 @@ export default function TeacherExamResponses() {
                                                                     : <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i>}
                                                         </td>
                                                         <td>
-                                                            <button
-                                                                className="btn btn-sm btn-success"
-                                                                onClick={() => grade(resp, q, true)}
-                                                            >Correct</button>
-                                                            <button
-                                                                className="btn btn-sm btn-danger ml-sm"
-                                                                onClick={() => grade(resp, q, false)}
-                                                            >Incorrect</button>
+                                                            {q.type === 'open-ended' ? (
+                                                                <>
+                                                                    <button
+                                                                        className="btn btn-sm btn-success"
+                                                                        onClick={() => grade(resp, q, true)}
+                                                                    >Correct</button>
+                                                                    <button
+                                                                        className="btn btn-sm btn-danger ml-sm"
+                                                                        onClick={() => grade(resp, q, false)}
+                                                                    >Incorrect</button>
+                                                                </>
+                                                            ) : (
+                                                                <span className="text-muted">Auto-graded</span>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                 );

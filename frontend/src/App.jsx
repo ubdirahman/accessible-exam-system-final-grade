@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ExamProvider } from './context/ExamContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminLayout from './components/AdminLayout'; // [NEW]
+import AdminSemesters from './pages/AdminSemesters';
 import LoginPage from './pages/LoginPage';
 import StudentDashboard from './pages/StudentDashboard';
 import ExamPage from './pages/ExamPage';
@@ -98,6 +99,11 @@ function AppRoutes() {
             <Route path="/admin/classes" element={
                 <ProtectedRoute roles={['admin', 'super_admin']}>
                     <AdminLayout><AdminClasses /></AdminLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/semesters" element={
+                <ProtectedRoute roles={['admin', 'super_admin']}>
+                    <AdminLayout><AdminSemesters /></AdminLayout>
                 </ProtectedRoute>
             } />
             <Route path="/admin/subjects" element={

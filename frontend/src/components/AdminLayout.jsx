@@ -32,6 +32,7 @@ export default function AdminLayout({ children }) {
                 { path: '/admin/students', label: 'Students', iconClass: 'fa-solid fa-user-graduate' },
                 { path: '/admin/teachers', label: 'Teachers', iconClass: 'fa-solid fa-chalkboard-user' },
                 { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
+                { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
                 { path: '/admin/subjects', label: 'Subject', iconClass: 'fa-solid fa-book' },
                 { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
             ];
@@ -43,6 +44,7 @@ export default function AdminLayout({ children }) {
             { path: '/admin/students', label: 'Students', iconClass: 'fa-solid fa-user-graduate' },
             { path: '/admin/teachers', label: 'Teachers', iconClass: 'fa-solid fa-chalkboard-user' },
             { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
+            { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
             { path: '/admin/subjects', label: 'Subject', iconClass: 'fa-solid fa-book' },
             { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
         ];
@@ -62,9 +64,9 @@ export default function AdminLayout({ children }) {
                                 ? 'Teacher Portal'
                                 : user?.role === 'super_admin'
                                     ? 'Super Admin'
-                                    : 'Faculty Admin'}
+                                    : 'Faculty Admin IT'}
                         </div>
-                        <div className="text-muted sidebar-subtitle">{user?.name || 'User'}</div>
+                        <div className="sidebar-subtitle">{user?.name || 'User'}</div>
                     </div>
                 </div>
 
@@ -100,3 +102,4 @@ export default function AdminLayout({ children }) {
         </div>
     );
 }
+

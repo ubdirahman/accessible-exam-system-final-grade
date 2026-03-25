@@ -10,6 +10,7 @@ export default function AdminSubjects() {
     const [classes, setClasses] = useState([]);
     const [teachers, setTeachers] = useState([]);
     const [subjects, setSubjects] = useState([]);
+    const [showAddForm, setShowAddForm] = useState(false);
     const [form, setForm] = useState({ name: '', code: '', classId: '', teacherId: '' });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -80,6 +81,7 @@ export default function AdminSubjects() {
         try {
             await api.post('/subjects', { ...form, facultyId });
             setForm({ name: '', code: '', classId: '', teacherId: '' });
+            setShowAddForm(false);
             loadSubjects(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to create subject');
@@ -129,6 +131,16 @@ export default function AdminSubjects() {
         <div className="fade-in">
             <div className="flex items-center justify-between mb-md">
                 <h1 style={{ fontWeight: 800 }}>Subjects</h1>
+                <button 
+                    className={`btn ${showAddForm ? 'btn-secondary' : 'btn-primary'}`} 
+                    onClick={() => setShowAddForm(!showAddForm)}
+                >
+                    {showAddForm ? (
+                        <><i className="fa-solid fa-xmark" aria-hidden="true"></i> Cancel</>
+                    ) : (
+                        <><i className="fa-solid fa-plus" aria-hidden="true"></i> Add Subject</>
+                    )}
+                </button>
             </div>
 
             {isSuper && (
@@ -141,35 +153,37 @@ export default function AdminSubjects() {
                 </div>
             )}
 
-            <div className="card mb-lg">
-                <h3 className="mb-sm">Add Subject</h3>
-                <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }} onSubmit={createSubject}>
-                    <div className="input-group">
-                        <label>Subject Name</label>
-                        <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
-                    </div>
-                    <div className="input-group">
-                        <label>Code</label>
-                        <input className="input" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} />
-                    </div>
-                    <div className="input-group">
-                        <label>Class</label>
-                        <select className="input" value={form.classId} onChange={e => setForm({ ...form, classId: e.target.value })} required>
-                            <option value="">Select class</option>
-                            {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
-                        </select>
-                    </div>
-                    <div className="input-group">
-                        <label>Teacher</label>
-                        <select className="input" value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} required>
-                            <option value="">Select teacher</option>
-                            {teachers.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
-                        </select>
-                    </div>
-                    <button className="btn btn-primary" type="submit">Add New Subject</button>
-                </form>
-                {error && <div className="badge badge-danger mt-sm">{error}</div>}
-            </div>
+            {showAddForm && (
+                <div className="card mb-lg slide-down">
+                    <h3 className="mb-sm">Add New Subject</h3>
+                    <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }} onSubmit={createSubject}>
+                        <div className="input-group">
+                            <label>Subject Name</label>
+                            <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+                        </div>
+                        <div className="input-group">
+                            <label>Code</label>
+                            <input className="input" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} />
+                        </div>
+                        <div className="input-group">
+                            <label>Class</label>
+                            <select className="input" value={form.classId} onChange={e => setForm({ ...form, classId: e.target.value })} required>
+                                <option value="">Select class</option>
+                                {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
+                            </select>
+                        </div>
+                        <div className="input-group">
+                            <label>Teacher</label>
+                            <select className="input" value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} required>
+                                <option value="">Select teacher</option>
+                                {teachers.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                            </select>
+                        </div>
+                        <button className="btn btn-primary" type="submit">Add New Subject</button>
+                    </form>
+                    {error && <div className="badge badge-danger mt-sm">{error}</div>}
+                </div>
+            )}
 
             <div className="card">
                 <div className="flex items-center justify-between mb-sm">

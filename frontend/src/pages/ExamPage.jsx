@@ -24,6 +24,7 @@ export default function ExamPage() {
     const [showFinishModal, setShowFinishModal] = useState(false);
     const [openEndedText, setOpenEndedText] = useState('');
     const [pendingDictation, setPendingDictation] = useState('');
+    const pendingDictationRef = useRef('');
     const [waitingAnswerConfirm, setWaitingAnswerConfirm] = useState(false);
     const [waitingNextConfirm, setWaitingNextConfirm] = useState(false);
     const [waitingFinishConfirm, setWaitingFinishConfirm] = useState(false);
@@ -34,6 +35,7 @@ export default function ExamPage() {
     const autoSaveRef = useRef(null);
     const dictationSaveTimer = useRef(null);
     const dictationTimeoutRef = useRef(null);
+    const listeningPromptRef = useRef(null);
 
     const showFeedback = (msg) => {
         setFeedbackMsg(msg);
@@ -126,7 +128,7 @@ export default function ExamPage() {
         if (currentQuestion.type === 'open-ended') return;
 
         setPendingAnswer(letter);
-        speak(`${letter}? Yes or no?`);
+        speak(`You said ${letter}. Yes to save, No to change.`);
         showFeedback(`Confirm ${letter}`);
         setShowConfirm(true);
     }, [currentQuestion, speak]);
@@ -146,18 +148,31 @@ export default function ExamPage() {
     const cancelAnswer = useCallback(() => {
         setPendingAnswer(null);
         setShowConfirm(false);
-        speak('Cancelled.');
+        speak('What is your answer? Please say A, B, C, or D.');
     }, [speak]);
 
 
     const handleOpenEndedSubmit = async () => {
-        if (!currentQuestion || !openEndedText.trim()) return;
-        const text = openEndedText;
-        setAnswer(currentQuestion.id, text);
-        await saveAnswer(currentQuestion.id, text);
+        if (!currentQuestion) return;
+        const textToSave = pendingDictationRef.current || pendingDictation || openEndedText;
+        if (!textToSave.trim()) return;
+
+        setAnswer(currentQuestion.id, textToSave);
+        await saveAnswer(currentQuestion.id, textToSave);
+
         speak('Answer recorded, please wait for teacher review.');
         showFeedback('<i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher...');
+
+        // Clear local state
         setOpenEndedText('');
+        setPendingDictation('');
+        pendingDictationRef.current = '';
+
+        if (dictationTimeoutRef.current) {
+            clearTimeout(dictationTimeoutRef.current);
+            dictationTimeoutRef.current = null;
+        }
+
         // advance after short delay
         setTimeout(() => nextQuestion(), 1000);
     };
@@ -215,19 +230,25 @@ export default function ExamPage() {
 
         if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
 
-        // accumulate transcript for 60s window
+        // accumulate transcript
         setOpenEndedText(prev => (prev ? `${prev} ${cleaned}` : cleaned));
-        setPendingDictation(prev => (prev ? `${prev} ${cleaned}` : cleaned));
+        setPendingDictation(prev => {
+            const updated = prev ? `${prev} ${cleaned}` : cleaned;
+            pendingDictationRef.current = updated;
+            return updated;
+        });
 
-        // start 60s capture window once
+        // start capture window (reduced for better responsiveness)
         if (!dictationTimeoutRef.current) {
             dictationTimeoutRef.current = setTimeout(() => {
                 dictationTimeoutRef.current = null;
                 setWaitingAnswerConfirm(true);
-                speak('I captured your answer. Is it correct? Say Yes or No.');
-            }, 60000);
+                const preview = pendingDictationRef.current || pendingDictation || '';
+                const shortPreview = preview.length > 160 ? `${preview.slice(0, 160)}...` : preview;
+                speak(`I captured your answer: ${shortPreview}. Is it correct? Say Yes or No. Ma keydiyaa jawaabtan? Dheh Haa ama Maya.`);
+            }, 25000);
         }
-    }, [currentQuestion, requestHelp, speak]);
+    }, [currentQuestion, pendingDictation, requestHelp, speak]);
 
     const commandMap = {
         // navigation
@@ -247,20 +268,7 @@ export default function ExamPage() {
         'yes': () => {
             if (waitingAnswerConfirm && currentQuestion?.type === 'open-ended') {
                 setWaitingAnswerConfirm(false);
-                if (dictationTimeoutRef.current) {
-                    clearTimeout(dictationTimeoutRef.current);
-                    dictationTimeoutRef.current = null;
-                }
-                setAnswer(currentQuestion.id, pendingDictation);
-                saveAnswer(currentQuestion.id, pendingDictation);
-                // if last question, prompt finish; else go next
-                if (currentIndex === questions.length - 1) {
-                    setWaitingFinishConfirm(true);
-                    speak('Answer saved. This was the last question. Finish exam now? Say Yes or No.');
-                } else {
-                    speak('Answer saved. Go to next question? Say Yes or No.');
-                    setWaitingNextConfirm(true);
-                }
+                handleOpenEndedSubmit();
                 return;
             }
             if (showConfirm && pendingAnswer) {
@@ -286,10 +294,16 @@ export default function ExamPage() {
             }
         },
         'no': () => {
+            if (showConfirm && pendingAnswer) {
+                cancelAnswer();
+                return;
+            }
             if (waitingAnswerConfirm) {
                 setWaitingAnswerConfirm(false);
-                speak('Okay, please say your answer again.');
+                speak('Okay, please say your answer again. Waayahay, fadlan markale jawaabta dheh.');
                 setOpenEndedText('');
+                setPendingDictation('');
+                pendingDictationRef.current = '';
                 return;
             }
             if (waitingNextConfirm) {
@@ -318,12 +332,43 @@ export default function ExamPage() {
                 setWaitingFinishConfirm(true);
                 speak('Finish the exam now? Say Yes or No.');
             }
+        },
+
+        // Open-Ended specific
+        'save answer': () => handleOpenEndedSubmit(),
+        'xaree': () => handleOpenEndedSubmit(),
+        'keydi': () => handleOpenEndedSubmit(),
+        'clear answer': () => {
+            setOpenEndedText('');
+            setPendingDictation('');
+            pendingDictationRef.current = '';
+            speak('Answer cleared. Jawaabtii waa la tirtiray.');
+        },
+        'tir-tir': () => {
+            setOpenEndedText('');
+            setPendingDictation('');
+            pendingDictationRef.current = '';
+            speak('Answer cleared. Jawaabtii waa la tirtiray.');
         }
     };
 
     const { isListening, transcript, lastCommand, startListening, stopListening, toggleListening } = useVoiceCommands(commandMap, true, handleVoiceDictation);
 
-    // Read question aloud when it changes
+    // Pause STT while TTS is speaking to avoid echo; resume after
+    useEffect(() => {
+        if (isSpeaking) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    }, [isSpeaking, startListening, stopListening]);
+
+    // Cleanup for listening prompt
+    useEffect(() => () => {
+        if (listeningPromptRef.current) clearTimeout(listeningPromptRef.current);
+    }, []);
+
+    // Read question aloud when it changes and set a single gentle prompt
     useEffect(() => {
         if (currentQuestion) {
             const text = currentQuestion.questionText +
@@ -331,6 +376,16 @@ export default function ExamPage() {
                     ? '. Options: ' + currentQuestion.options.map(o => `${o.label}, ${o.text}`).join('. ') + '.'
                     : '');
             speak(text);
+            if (listeningPromptRef.current) clearTimeout(listeningPromptRef.current);
+            if (currentQuestion.type === 'mcq' || currentQuestion.type === 'true-false') {
+                listeningPromptRef.current = setTimeout(() => {
+                    speak('Please answer with A, B, C, or D.');
+                }, 8000);
+            } else if (currentQuestion.type === 'open-ended') {
+                listeningPromptRef.current = setTimeout(() => {
+                    speak('You can speak your answer. Say "Save Answer" or "Xaree" when you are done. Waad ku hadli kartaa jawaabtaada. Dheh "Xaree" markaad dhammayso.');
+                }, 8000);
+            }
         }
     }, [currentQuestion, speak]);
 
@@ -373,8 +428,6 @@ export default function ExamPage() {
                     </div>
                 </div>
             </div>
-
-            {/* Voice commands active; instructions removed for brevity */}
 
             <div className="app-container" style={{ paddingTop: 24 }}>
                 {/* Progress */}
@@ -463,7 +516,7 @@ export default function ExamPage() {
                                     <button className="btn btn-primary" onClick={handleOpenEndedSubmit}>
                                         <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Answer
                                     </button>
-                                    <button className="btn btn-secondary" onClick={() => speak('You can type your answer or speak it. The answer will save automatically when you pause.')}>
+                                    <button className="btn btn-secondary" onClick={() => speak('You can type your answer or speak it. Say "Save Answer" or "Xaree" when you are done.')}>
                                         <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> Voice Hint
                                     </button>
                                 </div>
@@ -588,4 +641,3 @@ export default function ExamPage() {
         </div>
     );
 }
-

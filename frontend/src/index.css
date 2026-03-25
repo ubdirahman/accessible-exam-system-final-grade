@@ -137,8 +137,15 @@ a {
 /* Admin/Teacher shell */
 .admin-shell {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 280px 1fr;
   min-height: 100vh;
+  padding: 0 !important;
+}
+
+@media (max-width: 1024px) {
+  .admin-shell {
+    grid-template-columns: 240px 1fr;
+  }
 }
 
 @media (max-width: 900px) {
@@ -148,25 +155,42 @@ a {
 }
 
 .admin-sidebar {
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
+  background: darkgreen;
+  color: white;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
   padding: 24px 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 10;
+  overflow-y: auto;
 }
 
 .sidebar-brand {
   justify-content: flex-start;
-  gap: 10px;
+  gap: 12px;
+  background: none;
+  color: #ffffff !important;
+}
+
+.sidebar-brand i, 
+.sidebar-title, 
+.sidebar-subtitle {
+  color: #ffffff !important;
 }
 
 .sidebar-title {
   font-weight: 800;
+  color: #ffffff !important;
 }
 
 .sidebar-subtitle {
   font-size: var(--font-size-sm);
+  color: #ffffff !important;
 }
 
 .sidebar-nav {
@@ -179,10 +203,15 @@ a {
   justify-content: flex-start;
   gap: 10px;
   font-weight: 600;
+  color: white !important;
+}
+
+.sidebar-nav .btn:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .sidebar-nav .btn.active {
-  background: var(--bg-elevated);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .nav-icon {
@@ -193,6 +222,7 @@ a {
 
 .sidebar-footer {
   margin-top: auto;
+  padding-bottom: 12px;
 }
 
 .admin-main {

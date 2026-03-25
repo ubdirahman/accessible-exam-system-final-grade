@@ -18,11 +18,20 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         fallbackRef.current = fallbackHandler;
     }, [commandMap, fallbackHandler]);
 
-    const processCommand = useCallback((spoken) => {
+    const processCommand = useCallback((spoken, isFinal = true) => {
         const text = spoken.toLowerCase().trim();
         setTranscript(text);
 
         const commands = commandMapRef.current;
+
+        // Fast MCQ letter capture even inside longer phrases ("answer is b", "waa c")
+        const optionMatchFast = text.match(/\b([a-d])\b/);
+        if (optionMatchFast && commands['option']) {
+            const letter = optionMatchFast[1].toUpperCase();
+            setLastCommand(`Option ${letter}`);
+            commands['option'](letter);
+            return true;
+        }
 
         // 1. Data Extraction Patterns (Student ID, Exam Code)
         if (text.includes('my id is')) {
@@ -60,30 +69,20 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
             }
         }
 
-        // 3. Smart Option Selection matches: "Option A", "Choose B", "Answer C", or just "A"
-        // This regex handles the single letter case if strictly "A" is spoken, or "Option A"
-        const optionMatch = text.match(/(?:option|choose|answer|select)?\s*\b([a-d])\b/i);
-        if (optionMatch && commands['option']) {
-            const letter = optionMatch[1].toUpperCase();
-            setLastCommand(`Option ${letter}`);
-            commands['option'](letter);
-            return true;
-        }
-
-        // 4. Confirmations
-        if ((text === 'yes' || text === 'confirm' || text === 'do it') && commands['yes']) {
+        // 3. Confirmations (English + Somali)
+        if ((text === 'yes' || text === 'confirm' || text === 'do it' || text === 'haa') && commands['yes']) {
             setLastCommand('Yes');
             commands['yes']();
             return true;
         }
-        if ((text === 'no' || text === 'cancel' || text === 'stop') && commands['no']) {
+        if ((text === 'no' || text === 'cancel' || text === 'stop' || text === 'maya') && commands['no']) {
             setLastCommand('No');
             commands['no']();
             return true;
         }
 
-        // 5. Fallback for Dictation
-        if (fallbackRef.current) {
+        // 4. Fallback for Dictation (Only on final results to avoid duplicates)
+        if (isFinal && fallbackRef.current) {
             fallbackRef.current(text);
             return true;
         }
@@ -94,6 +93,7 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
     const lastExecutedRef = useRef(0);
 
     const startListening = useCallback(() => {
+        if (recognitionRef.current) return; // already listening
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
             console.warn('Speech Recognition not supported');
             return;
@@ -107,8 +107,8 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         recognition.onresult = (event) => {
             const now = Date.now();
-            // Reduced cooldown to 300ms to allow faster command chaining (e.g., "Yes... Next")
-            if (now - lastExecutedRef.current < 300) return;
+            // Reduced cooldown to 150ms to allow faster command chaining (e.g., "Yes... Next")
+            if (now - lastExecutedRef.current < 150) return;
 
             let interimTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -116,12 +116,12 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
                 const spoken = result[0].transcript.toLowerCase().trim();
 
                 if (result.isFinal) {
-                    if (processCommand(spoken)) {
+                    if (processCommand(spoken, true)) {
                         lastExecutedRef.current = now;
                     }
                 } else {
                     // Check for short, urgent commands in interim results (A, B, C, D, Next, Save)
-                    if (spoken.length <= 15 && processCommand(spoken)) {
+                    if (spoken.length <= 15 && processCommand(spoken, false)) {
                         lastExecutedRef.current = now;
                         // Stop recognition momentarily to "clear" the buffer if we found a match
                         recognition.stop();

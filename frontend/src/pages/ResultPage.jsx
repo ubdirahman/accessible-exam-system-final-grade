@@ -38,7 +38,17 @@ export default function ResultPage() {
     const commandMap = {
         'read feedback': () => readDetails(),
         'read details': () => readDetails(),
-        'read questions': () => readDetails()
+        'read questions': () => readDetails(),
+        'eeg faahfaahinta': () => readDetails(),
+        'akhri natiijada': () => {
+            const data = latestResult || result;
+            if (data) {
+                speak(
+                    `Exam complete. Your score is ${data.score} out of ${data.totalPoints}. ` +
+                    `${data.percentage} percent. ${data.correctCount} correct, ${data.wrongCount} wrong, ${data.skippedCount} skipped.`
+                );
+            }
+        }
     };
     const { isListening, startListening, stopListening } = useVoiceCommands(commandMap, true);
 

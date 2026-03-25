@@ -119,6 +119,18 @@ export default function StudentDashboard() {
             speak('Closing session.');
             logout();
             navigate('/');
+        },
+        'view results': () => {
+            if (examResult) navigate('/student/result');
+            else speak('You have not completed the exam yet.');
+        },
+        'eeg natiijada': () => {
+            if (examResult) navigate('/student/result');
+            else speak('Weli ma dhammaystirin imtixaanka.');
+        },
+        'fiiri natiijada': () => {
+            if (examResult) navigate('/student/result');
+            else speak('Weli ma dhammaystirin imtixaanka.');
         }
     };
 
@@ -131,11 +143,23 @@ export default function StudentDashboard() {
     }, []);
 
     useEffect(() => {
-        if (examData?.exam && !examResult && !hasSpokenIntro) {
-            speakExamInstructions(examData);
-            setHasSpokenIntro(true);
+        if (examData?.exam && !hasSpokenIntro) {
+            if (examResult) {
+                const text = [
+                    `Welcome back ${user?.name || 'student'}. Ku soo dhawoow ${user?.name || 'araday'}.`,
+                    `You have completed your exam: ${examData.exam.title}.`,
+                    `Waad dhammaysay imtixaankaaga: ${examData.exam.title}.`,
+                    `Say "View Results" or "Eeg natiijada" to see your score.`,
+                    `Dheh "View Results" ama "Eeg natiijada" si aad u aragto dhibcahaaga.`
+                ].join(' ');
+                speak(text, { rate: 1.0 });
+                setHasSpokenIntro(true);
+            } else if (!examResult) {
+                speakExamInstructions(examData);
+                setHasSpokenIntro(true);
+            }
         }
-    }, [examData, examResult, hasSpokenIntro, speakExamInstructions]);
+    }, [examData, examResult, hasSpokenIntro, speakExamInstructions, user?.name, speak]);
 
     const loadExam = async () => {
         try {

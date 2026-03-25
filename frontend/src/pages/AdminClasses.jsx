@@ -7,12 +7,14 @@ export default function AdminClasses() {
     const isSuper = user?.role === 'super_admin';
     const [faculties, setFaculties] = useState([]);
     const [selectedFaculty, setSelectedFaculty] = useState(user?.facultyId || '');
+    const [semesters, setSemesters] = useState([]);
     const [classes, setClasses] = useState([]);
-    const [form, setForm] = useState({ name: '', code: '' });
+    const [showForm, setShowForm] = useState(false);
+    const [form, setForm] = useState({ name: '', code: '', semesterId: '' });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [editingId, setEditingId] = useState(null);
-    const [editForm, setEditForm] = useState({ name: '', code: '' });
+    const [editForm, setEditForm] = useState({ name: '', code: '', semesterId: '' });
 
     const loadFaculties = async () => {
         if (!isSuper) return;
@@ -24,6 +26,16 @@ export default function AdminClasses() {
             }
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to load faculties');
+        }
+    };
+
+    const loadSemesters = async (facultyId) => {
+        if (!facultyId) { setSemesters([]); return; }
+        try {
+            const res = await api.get('/semesters', { params: { facultyId } });
+            setSemesters(res.data);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Failed to load semesters');
         }
     };
 
@@ -46,7 +58,10 @@ export default function AdminClasses() {
 
     useEffect(() => {
         const fid = isSuper ? selectedFaculty : user?.facultyId;
-        if (fid) loadClasses(fid);
+        if (fid) {
+            loadSemesters(fid);
+            loadClasses(fid);
+        }
     }, [selectedFaculty, user?.facultyId, isSuper]);
 
     const createClass = async (e) => {
@@ -55,7 +70,8 @@ export default function AdminClasses() {
         if (!facultyId) return setError('Select a faculty first.');
         try {
             await api.post('/classes', { ...form, facultyId });
-            setForm({ name: '', code: '' });
+            setForm({ name: '', code: '', semesterId: '' });
+            setShowForm(false);
             loadClasses(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to create class');
@@ -76,13 +92,13 @@ export default function AdminClasses() {
 
     const startEdit = (c) => {
         setEditingId(c._id);
-        setEditForm({ name: c.name, code: c.code || '' });
+        setEditForm({ name: c.name, code: c.code || '', semesterId: c.semesterId?._id || c.semesterId || '' });
     };
 
     const saveEdit = async () => {
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         try {
-            await api.put(`/classes/${editingId}`, { name: editForm.name, code: editForm.code, facultyId });
+            await api.put(`/classes/${editingId}`, { ...editForm, facultyId });
             setEditingId(null);
             loadClasses(facultyId);
         } catch (err) {
@@ -94,6 +110,16 @@ export default function AdminClasses() {
         <div className="fade-in">
             <div className="flex items-center justify-between mb-md">
                 <h1 style={{ fontWeight: 800 }}>Classes</h1>
+                <button 
+                    className={`btn ${showForm ? 'btn-secondary' : 'btn-primary'}`} 
+                    onClick={() => setShowForm(!showForm)}
+                >
+                    {showForm ? (
+                        <><i className="fa-solid fa-xmark" aria-hidden="true"></i> Cancel</>
+                    ) : (
+                        <><i className="fa-solid fa-plus" aria-hidden="true"></i> Add Class</>
+                    )}
+                </button>
             </div>
 
             {isSuper && (
@@ -106,21 +132,30 @@ export default function AdminClasses() {
                 </div>
             )}
 
-            <div className="card mb-lg">
-                <h3 className="mb-sm">Add Class</h3>
-                <form className="flex gap-md" style={{ flexWrap: 'wrap' }} onSubmit={createClass}>
-                    <div className="input-group" style={{ flex: 1, minWidth: 200 }}>
-                        <label>Name</label>
-                        <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
-                    </div>
-                    <div className="input-group" style={{ flex: 1, minWidth: 160 }}>
-                        <label>Code</label>
-                        <input className="input" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} />
-                    </div>
-                    <button className="btn btn-primary" type="submit">Save</button>
-                </form>
-                {error && <div className="badge badge-danger mt-sm">{error}</div>}
-            </div>
+            {showForm && (
+                <div className="card mb-lg slide-down">
+                    <h3 className="mb-sm">Register New Class</h3>
+                    <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={createClass}>
+                        <div className="input-group" style={{ flex: 1, minWidth: 200 }}>
+                            <label>Name</label>
+                            <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+                        </div>
+                        <div className="input-group" style={{ flex: 1, minWidth: 160 }}>
+                            <label>Code</label>
+                            <input className="input" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} />
+                        </div>
+                        <div className="input-group">
+                            <label>Semester</label>
+                            <select className="input" value={form.semesterId} onChange={e => setForm({ ...form, semesterId: e.target.value })} required>
+                                <option value="">Select semester</option>
+                                {semesters.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                            </select>
+                        </div>
+                        <button className="btn btn-primary" type="submit">Save</button>
+                    </form>
+                    {error && <div className="badge badge-danger mt-sm">{error}</div>}
+                </div>
+            )}
 
             <div className="card">
                 <div className="flex items-center justify-between mb-sm">
@@ -138,6 +173,7 @@ export default function AdminClasses() {
                                 <tr>
                                     <th>Name</th>
                                     <th>Code</th>
+                                    <th>Semester</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -153,6 +189,16 @@ export default function AdminClasses() {
                                             {editingId === c._id
                                                 ? <input className="input" value={editForm.code} onChange={e => setEditForm({ ...editForm, code: e.target.value })} />
                                                 : (c.code || '—')}
+                                        </td>
+                                        <td>
+                                            {editingId === c._id
+                                                ? (
+                                                    <select className="input" value={editForm.semesterId} onChange={e => setEditForm({ ...editForm, semesterId: e.target.value })}>
+                                                        <option value="">Select semester</option>
+                                                        {semesters.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                                                    </select>
+                                                )
+                                                : (c.semesterId?.name || '—')}
                                         </td>
                                         <td>
                                             {editingId === c._id ? (

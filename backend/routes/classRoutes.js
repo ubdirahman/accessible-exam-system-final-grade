@@ -17,7 +17,7 @@ router.get('/', verifyToken, requireAdmin, async (req, res) => {
         if (!facultyId) {
             return res.status(400).json({ message: 'facultyId is required.' });
         }
-        const classes = await Classroom.find({ facultyId }).sort({ createdAt: -1 });
+        const classes = await Classroom.find({ facultyId }).populate('semesterId', 'name').sort({ createdAt: -1 });
         res.json(classes);
     } catch (error) {
         console.error('Fetch classes error:', error);
@@ -56,13 +56,15 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
         const facultyId = resolveFacultyId(req);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
-        const { name, code } = req.body;
+        const { name, code, semesterId } = req.body;
         if (!name) return res.status(400).json({ message: 'Class name is required.' });
+        if (!semesterId) return res.status(400).json({ message: 'Semester is required.' });
 
         const classroom = await Classroom.create({
             name,
             code,
             facultyId,
+            semesterId,
             createdBy: req.user.id
         });
         res.status(201).json(classroom);
@@ -81,7 +83,7 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
         const facultyId = resolveFacultyId(req);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
-        const updates = (({ name, code }) => ({ name, code }))(req.body);
+        const updates = (({ name, code, semesterId }) => ({ name, code, semesterId }))(req.body);
         const classroom = await Classroom.findOneAndUpdate(
             { _id: req.params.id, facultyId },
             updates,

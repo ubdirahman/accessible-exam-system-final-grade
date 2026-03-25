@@ -6,6 +6,7 @@ const connectDB = require('./config/db');
 // Load env vars
 dotenv.config();
 
+
 // Connect to MongoDB
 connectDB();
 
@@ -26,6 +27,7 @@ app.use('/api', require('./routes/authRoutes'));
 app.use('/api/exams', require('./routes/examRoutes'));
 app.use('/api/logs', require('./routes/logRoutes'));
 app.use('/api/results', require('./routes/resultRoutes'));
+app.use('/api/semesters', require('./routes/semesterRoutes'));
 app.use('/api/teachers', require('./routes/teacherRoutes'));  // new teacher management endpoints
 app.use('/api/faculties', require('./routes/facultyRoutes'));
 app.use('/api/classes', require('./routes/classRoutes'));
