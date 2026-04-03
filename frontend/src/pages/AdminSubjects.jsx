@@ -176,7 +176,10 @@ export default function AdminSubjects() {
                             <label>Teacher</label>
                             <select className="input" value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} required>
                                 <option value="">Select teacher</option>
-                                {teachers.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                                {teachers
+                                    .filter(t => (t.classId?._id || t.classId) === form.classId)
+                                    .map(t => <option key={t._id} value={t._id}>{t.name}</option>)
+                                }
                             </select>
                         </div>
                         <button className="btn btn-primary" type="submit">Add New Subject</button>
@@ -234,8 +237,11 @@ export default function AdminSubjects() {
                                                     ? (
                                                         <select className="input" value={editForm.teacherId} onChange={e => setEditForm({ ...editForm, teacherId: e.target.value })}>
                                                             <option value="">Select teacher</option>
-                                                            {teachers.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
-                                                        </select>
+                                                    {teachers
+                                                        .filter(t => (t.classId?._id || t.classId) === editForm.classId)
+                                                        .map(t => <option key={t._id} value={t._id}>{t.name}</option>)
+                                                    }
+                                                </select>
                                                     ) : (s.teacherId?.name || '—')}
                                             </td>
                                             <td>

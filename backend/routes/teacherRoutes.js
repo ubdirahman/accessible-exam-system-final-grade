@@ -10,6 +10,8 @@ router.get('/', verifyToken, requireAdmin, async (req, res) => {
         const isSuper = req.user.role === 'super_admin';
         const facultyId = req.user.facultyId || req.query.facultyId;
         const query = isSuper && facultyId ? { facultyId } : isSuper ? {} : { facultyId: req.user.facultyId };
+        if (req.query.classId) query.classId = req.query.classId;
+        
         const teachers = await Teacher.find(query).sort({ createdAt: -1 });
         res.json(teachers);
     } catch (error) {

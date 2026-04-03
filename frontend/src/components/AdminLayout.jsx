@@ -1,10 +1,29 @@
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import api from '../api/axios';
 
 export default function AdminLayout({ children }) {
     const { user, logout } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
+    const [myClass, setMyClass] = useState(null);
+
+    useEffect(() => {
+        if (user?.role === 'teacher' && user?.classId) {
+            const fetchClass = async () => {
+                try {
+                    const res = await api.get('/classes/my');
+                    if (res.data && res.data.length > 0) {
+                        setMyClass(res.data[0]);
+                    }
+                } catch (err) {
+                    console.error('Error fetching teacher class:', err);
+                }
+            };
+            fetchClass();
+        }
+    }, [user]);
 
     const handleLogout = () => {
         logout();
@@ -33,7 +52,6 @@ export default function AdminLayout({ children }) {
                 { path: '/admin/teachers', label: 'Teachers', iconClass: 'fa-solid fa-chalkboard-user' },
                 { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
                 { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
-                { path: '/admin/subjects', label: 'Subject', iconClass: 'fa-solid fa-book' },
                 { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
             ];
         }
@@ -45,7 +63,6 @@ export default function AdminLayout({ children }) {
             { path: '/admin/teachers', label: 'Teachers', iconClass: 'fa-solid fa-chalkboard-user' },
             { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
             { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
-            { path: '/admin/subjects', label: 'Subject', iconClass: 'fa-solid fa-book' },
             { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
         ];
     })();
@@ -66,7 +83,14 @@ export default function AdminLayout({ children }) {
                                     ? 'Super Admin'
                                     : 'Faculty Admin IT'}
                         </div>
-                        <div className="sidebar-subtitle">{user?.name || 'User'}</div>
+                        <div className="sidebar-subtitle">
+                            {user?.name || 'User'} 
+                            {user?.role === 'teacher' && (myClass || user?.classId?.name) && (
+                                <div style={{ fontSize: 10, opacity: 0.8, marginTop: 2 }}>
+                                    <i className="fa-solid fa-graduation-cap"></i> {myClass?.name || user.classId.name || 'Assigned Class'}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 

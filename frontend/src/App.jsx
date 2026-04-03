@@ -126,6 +126,11 @@ function AppRoutes() {
                     <AdminLayout><TeacherExamResponses /></AdminLayout>
                 </ProtectedRoute>
             } />
+            <Route path="/admin/exams/edit/:id" element={
+                <ProtectedRoute roles={['admin', 'super_admin']}>
+                    <AdminLayout><ExamCreator /></AdminLayout>
+                </ProtectedRoute>
+            } />
 
             {/* Teacher routes (reuse layout) */}
             <Route path="/teacher" element={
@@ -146,6 +151,11 @@ function AppRoutes() {
                 </ProtectedRoute>
             } />
             <Route path="/teacher/create-exam" element={
+                <ProtectedRoute role="teacher">
+                    <AdminLayout><ExamCreator /></AdminLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/teacher/exams/edit/:id" element={
                 <ProtectedRoute role="teacher">
                     <AdminLayout><ExamCreator /></AdminLayout>
                 </ProtectedRoute>

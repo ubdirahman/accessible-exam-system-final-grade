@@ -17,7 +17,10 @@ router.get('/', verifyToken, requireAdmin, async (req, res) => {
         const facultyId = resolveFacultyId(req);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
-        const subjects = await Subject.find({ facultyId }).sort({ createdAt: -1 }).populate('teacherId', 'name').populate('classId', 'name');
+        const filter = { facultyId };
+        if (req.query.classId) filter.classId = req.query.classId;
+
+        const subjects = await Subject.find(filter).sort({ createdAt: -1 }).populate('teacherId', 'name').populate('classId', 'name');
         res.json(subjects);
     } catch (error) {
         console.error('Fetch subjects error:', error);
@@ -28,7 +31,10 @@ router.get('/', verifyToken, requireAdmin, async (req, res) => {
 // GET /api/subjects/my — subjects assigned to the current teacher
 router.get('/my', verifyToken, requireTeacher, async (req, res) => {
     try {
-        const subjects = await Subject.find({ teacherId: req.user.id }).populate('classId', 'name');
+        const query = { teacherId: req.user.id };
+        if (req.user.classId) query.classId = req.user.classId;
+        
+        const subjects = await Subject.find(query).populate('classId', 'name');
         res.json(subjects);
     } catch (error) {
         console.error('Fetch my subjects error:', error);

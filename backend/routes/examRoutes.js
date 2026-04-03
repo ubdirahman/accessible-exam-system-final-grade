@@ -99,17 +99,23 @@ router.post('/', verifyToken, requireAdminOrTeacher, async (req, res) => {
         }
 
         let finalClassId = classId || null;
-        // teachers default to their class if not provided
-        if (req.user.role === 'teacher' && !finalClassId) {
-            finalClassId = req.user.classId || null;
+        if (req.user.role === 'teacher') {
+            finalClassId = req.user.classId?.toString() || null;
+            if (!finalClassId) return res.status(403).json({ message: 'Teacher has no assigned class account.' });
         }
 
         if (subjectId) {
             const Subject = require('../models/Subject');
             const subj = await Subject.findOne({ _id: subjectId, facultyId });
             if (!subj) return res.status(400).json({ message: 'Subject not found for this faculty.' });
-            if (req.user.role === 'teacher' && subj.teacherId?.toString() !== req.user.id) {
-                return res.status(403).json({ message: 'You can only create exams for your own subjects.' });
+
+            if (req.user.role === 'teacher') {
+                if (subj.teacherId?.toString() !== req.user.id) {
+                    return res.status(403).json({ message: 'You can only create exams for your own subjects.' });
+                }
+                if (subj.classId?.toString() !== req.user.classId?.toString()) {
+                    return res.status(403).json({ message: 'This subject does not belong to your assigned class.' });
+                }
             }
             // align class with subject if subject has one
             if (subj.classId) {
@@ -178,7 +184,14 @@ router.post('/', verifyToken, requireAdminOrTeacher, async (req, res) => {
 router.get('/', verifyToken, requireAdmin, async (req, res) => {
     try {
         const query = req.user.role === 'admin' ? { facultyId: req.user.facultyId } : {};
-        const exams = await Exam.find(query).populate('sections').sort({ createdAt: -1 });
+        const exams = await Exam.find(query)
+            .populate('sections')
+            .populate({
+                path: 'subjectId',
+                populate: { path: 'teacherId', select: 'name' }
+            })
+            .populate('createdBy', 'name')
+            .sort({ createdAt: -1 });
         console.log(`[DEBUG] Found ${exams.length} exams in database.`);
         res.json(exams);
     } catch (error) {
@@ -219,9 +232,28 @@ router.get('/students', verifyToken, requireAdmin, async (req, res) => {
         const query = req.user.role === 'admin'
             ? { facultyId: req.user.facultyId }
             : (req.query.facultyId ? { facultyId: req.query.facultyId } : {});
+        
+        if (req.query.classId) {
+            query.classId = req.query.classId;
+        }
+
         const students = await Student.find(query).sort({ createdAt: -1 });
+
+        // Calculate actual exams taken by counting Result documents per student
+        const resultCounts = await Result.aggregate([
+            { $group: { _id: "$studentId", count: { $sum: 1 } } }
+        ]);
+        const countMap = {};
+        resultCounts.forEach(r => { countMap[r._id] = r.count; });
+
+        const studentsWithCounts = students.map(s => {
+            const doc = s.toObject();
+            doc.examsTaken = countMap[s.studentId] || 0;
+            return doc;
+        });
+
         console.log(`[DEBUG] Found ${students.length} students in database.`);
-        res.json(students);
+        res.json(studentsWithCounts);
     } catch (error) {
         console.error('CRITICAL FETCH STUDENTS ERROR:', error.message);
         console.error(error.stack);
@@ -233,7 +265,19 @@ router.get('/students', verifyToken, requireAdmin, async (req, res) => {
 // GET /api/exams/my - exams created by current user (admin or teacher)
 router.get('/my', verifyToken, requireAdminOrTeacher, async (req, res) => {
     try {
-        const exams = await Exam.find({ createdBy: req.user.id }).populate('sections').sort({ createdAt: -1 });
+        const query = { createdBy: req.user.id };
+        if (req.user.role === 'teacher' && req.user.classId) {
+            query.classId = req.user.classId;
+        }
+
+        const exams = await Exam.find(query)
+            .populate('sections')
+            .populate({
+                path: 'subjectId',
+                populate: { path: 'teacherId', select: 'name' }
+            })
+            .populate('createdBy', 'name')
+            .sort({ createdAt: -1 });
         res.json(exams);
     } catch (error) {
         console.error('Error fetching my exams:', error);
@@ -295,6 +339,22 @@ router.get('/:examId/students/:studentId/responses', verifyToken, requireAdminOr
     }
 });
 
+// GET /api/exams/:examId/all-responses - return all responses + question data for an exam
+router.get('/:examId/all-responses', verifyToken, requireAdminOrTeacher, async (req, res) => {
+    try {
+        const { examId } = req.params;
+        const exam = await loadExamIfAllowed(req.user, examId);
+        if (!exam) return res.status(403).json({ message: 'Access denied for this exam.' });
+        
+        const questions = await Question.find({ examId }).sort({ order: 1 });
+        const responses = await Response.find({ examId });
+        res.json({ questions, responses });
+    } catch (error) {
+        console.error('Error fetching all responses:', error);
+        res.status(500).json({ message: 'Error fetching responses.' });
+    }
+});
+
 // PUT /api/exams/:examId/students/:studentId/responses/:responseId
 // teacher or admin can update correctness, score, feedback
 router.put('/:examId/students/:studentId/responses/:responseId', verifyToken, requireAdminOrTeacher, async (req, res) => {
@@ -303,12 +363,17 @@ router.put('/:examId/students/:studentId/responses/:responseId', verifyToken, re
         const exam = await loadExamIfAllowed(req.user, examId);
         if (!exam) return res.status(403).json({ message: 'Access denied for this exam.' });
         // only accept grading fields, questionId is optional to allow creating a missing response
-        const updates = (({ isCorrect, teacherFeedback, questionId }) => ({ isCorrect, teacherFeedback, questionId }))(req.body);
+        const updates = (({ isCorrect, teacherFeedback, questionId, score }) => ({ isCorrect, teacherFeedback, questionId, score }))(req.body);
         updates.manuallyGraded = true;
 
-        let response = mongoose.isValidObjectId(responseId) ? await Response.findById(responseId) : null;
+        let response = (responseId && mongoose.isValidObjectId(responseId)) ? await Response.findById(responseId) : null;
 
-        // if response doesn't exist, allow creation (for skipped questions)
+        // if response doesn't exist, try to find it by student/exam/question first before creating
+        if (!response && updates.questionId) {
+            response = await Response.findOne({ studentId, examId, questionId: updates.questionId });
+        }
+
+        // if still no response, allow creation (for skipped questions)
         if (!response) {
             if (!updates.questionId || !mongoose.isValidObjectId(updates.questionId)) {
                 return res.status(400).json({ message: 'Response not found and questionId missing.' });
@@ -317,7 +382,7 @@ router.put('/:examId/students/:studentId/responses/:responseId', verifyToken, re
                 studentId,
                 examId,
                 questionId: updates.questionId,
-                selectedAnswer: '',
+                selectedAnswer: '(No Answer Provided)',
                 answeredAt: new Date()
             });
         }
@@ -325,14 +390,16 @@ router.put('/:examId/students/:studentId/responses/:responseId', verifyToken, re
         const question = await Question.findById(response.questionId);
         if (!question) return res.status(404).json({ message: 'Question not found.' });
 
-        updates.score = updates.isCorrect ? (question.points || 1) : 0;
+        // If score is explicitly provided in updates, use it; otherwise default to points/0
+        if (typeof updates.score === 'undefined' || updates.score === null || updates.score === '') {
+            updates.score = updates.isCorrect ? (question.points || 1) : 0;
+        }
 
-        response.isCorrect = updates.isCorrect;
-        response.score = updates.score;
+        response.isCorrect = !!updates.isCorrect;
+        response.score = Number(updates.score);
         response.teacherFeedback = updates.teacherFeedback;
         response.manuallyGraded = true;
         response.autoGraded = false;
-        response.selectedAnswer = response.selectedAnswer || ''; // keep blank if none
         await response.save();
 
         // log grading event so admin corrections are audited
@@ -375,42 +442,103 @@ router.get('/:id', verifyToken, async (req, res) => {
     }
 });
 
-// PUT /api/exams/:id — Update exam (admin or teacher can edit; teacher only their own)
+// PUT /api/exams/:id — Update exam (including sections and questions)
 router.put('/:id', verifyToken, requireAdminOrTeacher, async (req, res) => {
     try {
-        const { title, description, timeLimit, active, classId, subjectId } = req.body;
+        const { title, description, timeLimit, active, classId, subjectId, sections: sectionsData } = req.body;
         const exam = await Exam.findById(req.params.id);
         if (!exam) return res.status(404).json({ message: 'Exam not found.' });
+
         if (req.user.role === 'teacher' && exam.createdBy.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized to modify this exam.' });
         }
         if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
             return res.status(403).json({ message: 'Access denied for this faculty.' });
         }
+
         exam.title = title;
         exam.description = description;
         exam.timeLimit = timeLimit;
+
         if (req.user.role !== 'teacher') {
             exam.active = active;
-            if (classId) {
-                const Classroom = require('../models/Classroom');
-                const klass = await Classroom.findOne({ _id: classId, facultyId: exam.facultyId });
-                if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
-                exam.classId = classId;
-            }
-            if (subjectId) {
-                const Subject = require('../models/Subject');
-                const subj = await Subject.findOne({ _id: subjectId, facultyId: exam.facultyId });
-                if (!subj) return res.status(400).json({ message: 'Subject not found for this faculty.' });
-                exam.subjectId = subjectId;
-                if (subj.classId) {
-                    exam.classId = subj.classId;
+            if (classId) exam.classId = classId;
+            if (subjectId) exam.subjectId = subjectId;
+        }
+
+        // --- Deep sync for Sections & Questions ---
+        if (sectionsData) {
+            const incomingSectionIds = sectionsData.filter(s => s._id).map(s => String(s._id));
+            
+            // Delete sections no longer in the list
+            await Section.deleteMany({ examId: exam._id, _id: { $nin: incomingSectionIds } });
+            // Delete questions belonging to deleted sections is handled by examId filter usually but better be safe
+            await Question.deleteMany({ examId: exam._id, sectionId: { $nin: incomingSectionIds } });
+
+            const newSectionIds = [];
+            for (let i = 0; i < sectionsData.length; i++) {
+                const secData = sectionsData[i];
+                let section;
+
+                if (secData._id && mongoose.isValidObjectId(secData._id)) {
+                    section = await Section.findById(secData._id);
+                }
+
+                if (section) {
+                    section.name = secData.name;
+                    section.order = i + 1;
+                    await section.save();
+                } else {
+                    section = await Section.create([{
+                        examId: exam._id,
+                        name: secData.name,
+                        order: i + 1
+                    }]);
+                    section = section[0];
+                }
+                newSectionIds.push(section._id);
+
+                // --- Sync Questions for this section ---
+                if (secData.questions) {
+                    const incomingQuestionIds = secData.questions.filter(q => q._id).map(q => String(q._id));
+                    // Delete questions no longer in this section
+                    await Question.deleteMany({ sectionId: section._id, _id: { $nin: incomingQuestionIds } });
+
+                    for (let j = 0; j < secData.questions.length; j++) {
+                        const qData = secData.questions[j];
+                        let question;
+
+                        if (qData._id && mongoose.isValidObjectId(qData._id)) {
+                            question = await Question.findById(qData._id);
+                        }
+
+                        const qPayload = {
+                            examId: exam._id,
+                            sectionId: section._id,
+                            type: qData.type,
+                            questionText: qData.questionText,
+                            options: qData.options || [],
+                            correctAnswer: qData.type === 'open-ended' ? '' : qData.correctAnswer,
+                            points: qData.points || 1,
+                            order: j + 1
+                        };
+
+                        if (question) {
+                            Object.assign(question, qPayload);
+                            await question.save();
+                        } else {
+                            await Question.create([qPayload]);
+                        }
+                    }
                 }
             }
+            exam.sections = newSectionIds;
         }
+
         await exam.save();
-        res.json({ message: 'Exam updated.', exam });
+        res.json({ message: 'Exam updated successfully.', exam });
     } catch (error) {
+        console.error('Update exam error:', error);
         res.status(500).json({ message: 'Error updating exam.' });
     }
 });

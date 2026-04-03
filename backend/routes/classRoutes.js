@@ -17,7 +17,11 @@ router.get('/', verifyToken, requireAdmin, async (req, res) => {
         if (!facultyId) {
             return res.status(400).json({ message: 'facultyId is required.' });
         }
-        const classes = await Classroom.find({ facultyId }).populate('semesterId', 'name').sort({ createdAt: -1 });
+        
+        const filter = { facultyId };
+        if (req.query.semesterId) filter.semesterId = req.query.semesterId;
+
+        const classes = await Classroom.find(filter).populate('semesterId', 'name').sort({ createdAt: -1 });
         res.json(classes);
     } catch (error) {
         console.error('Fetch classes error:', error);
@@ -31,12 +35,8 @@ router.get('/my', verifyToken, requireTeacher, async (req, res) => {
         const Subject = require('../models/Subject');
         const teacherId = req.user.id;
 
-        // gather class IDs from subjects the teacher owns, plus their primary classId if set
-        const subjects = await Subject.find({ teacherId }).select('classId');
-        const subjectClassIds = subjects.map(s => s.classId).filter(Boolean).map(id => id.toString());
-        const teacherClassId = req.user.classId ? [req.user.classId.toString()] : [];
-
-        const classIds = [...new Set([...subjectClassIds, ...teacherClassId])];
+        // gather class IDs from the teacher's primary classId
+        const classIds = req.user.classId ? [req.user.classId.toString()] : [];
 
         if (classIds.length === 0) {
             return res.json([]);

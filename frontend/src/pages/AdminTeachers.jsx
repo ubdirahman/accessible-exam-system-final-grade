@@ -9,12 +9,14 @@ export default function AdminTeachers() {
     const [selectedFaculty, setSelectedFaculty] = useState(user?.facultyId || '');
     const [classes, setClasses] = useState([]);
     const [teachers, setTeachers] = useState([]);
+    const [selectedClass, setSelectedClass] = useState(null);
     const [showForm, setShowForm] = useState(false);
-    const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', password: '', classId: '' });
+    const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', password: '' });
     const [loading, setLoading] = useState(true);
+    const [teacherLoading, setTeacherLoading] = useState(false);
     const [error, setError] = useState('');
     const [editingId, setEditingId] = useState(null);
-    const [editForm, setEditForm] = useState({ name: '', phone: '', address: '', classId: '', active: true });
+    const [editForm, setEditForm] = useState({ name: '', phone: '', address: '', active: true });
 
     const loadFaculties = async () => {
         if (!isSuper) return;
@@ -30,23 +32,27 @@ export default function AdminTeachers() {
     const loadClasses = async (facultyId) => {
         if (!facultyId) return;
         try {
+            setLoading(true);
             const res = await api.get('/classes', { params: { facultyId } });
             setClasses(res.data);
         } catch (err) {
             setError('Failed to load classes.');
+        } finally {
+            setLoading(false);
         }
     };
 
-    const loadTeachers = async () => {
+    const loadTeachers = async (classId) => {
+        if (!classId) return;
         try {
-            setLoading(true);
-            const params = isSuper && selectedFaculty ? { facultyId: selectedFaculty } : {};
-            const res = await api.get('/teachers', { params });
+            setTeacherLoading(true);
+            const fid = isSuper ? selectedFaculty : user?.facultyId;
+            const res = await api.get('/teachers', { params: { facultyId: fid, classId } });
             setTeachers(res.data);
         } catch (err) {
             setError('Failed to load teachers.');
         } finally {
-            setLoading(false);
+            setTeacherLoading(false);
         }
     };
 
@@ -56,22 +62,23 @@ export default function AdminTeachers() {
 
     useEffect(() => {
         const fid = isSuper ? selectedFaculty : user?.facultyId;
-        if (fid) {
-            loadClasses(fid);
-            loadTeachers();
-        }
-    }, [selectedFaculty, isSuper]);
+        if (fid) loadClasses(fid);
+    }, [selectedFaculty, isSuper, user?.facultyId]);
+
+    useEffect(() => {
+        if (selectedClass) loadTeachers(selectedClass._id);
+    }, [selectedClass]);
 
     const addTeacher = async (e) => {
         e.preventDefault();
         setError('');
         try {
-            const payload = { ...form };
-            if (isSuper) payload.facultyId = selectedFaculty;
+            const facultyId = isSuper ? selectedFaculty : user?.facultyId;
+            const payload = { ...form, classId: selectedClass._id, facultyId };
             await api.post('/teachers', payload);
-            setForm({ name: '', email: '', phone: '', address: '', password: '', classId: '' });
+            setForm({ name: '', email: '', phone: '', address: '', password: '' });
             setShowForm(false);
-            loadTeachers();
+            loadTeachers(selectedClass._id);
         } catch (err) {
             setError(err.response?.data?.message || 'Error creating teacher.');
         }
@@ -80,9 +87,9 @@ export default function AdminTeachers() {
     const deleteTeacher = async (id) => {
         if (!window.confirm('Delete this teacher?')) return;
         try {
-            const params = isSuper && selectedFaculty ? { facultyId: selectedFaculty } : {};
-            await api.delete(`/teachers/${id}`, { params });
-            loadTeachers();
+            const facultyId = isSuper ? selectedFaculty : user?.facultyId;
+            await api.delete(`/teachers/${id}`, { params: { facultyId } });
+            loadTeachers(selectedClass._id);
         } catch (err) {
             setError('Error deleting teacher.');
         }
@@ -90,148 +97,194 @@ export default function AdminTeachers() {
 
     const startEdit = (t) => {
         setEditingId(t._id);
-        setEditForm({ name: t.name, phone: t.phone, address: t.address || '', classId: t.classId || '', active: !!t.active });
+        setEditForm({ name: t.name, phone: t.phone, address: t.address || '', active: !!t.active });
     };
 
     const saveEdit = async () => {
         try {
-            const params = isSuper && selectedFaculty ? { facultyId: selectedFaculty } : {};
+            const facultyId = isSuper ? selectedFaculty : user?.facultyId;
             await api.put(`/teachers/${editingId}`, {
-                name: editForm.name,
-                phone: editForm.phone,
-                address: editForm.address,
-                active: editForm.active,
-                classId: editForm.classId
-            }, { params });
+                ...editForm,
+                facultyId
+            });
             setEditingId(null);
-            loadTeachers();
+            loadTeachers(selectedClass._id);
         } catch (err) {
             setError(err.response?.data?.message || 'Error saving teacher.');
         }
     };
 
-    if (loading) return <div className="spinner"></div>;
+    if (loading && !selectedClass) return <div className="spinner"></div>;
+
+    if (selectedClass) {
+        return (
+            <div className="fade-in">
+                <div className="back-link" onClick={() => setSelectedClass(null)}>
+                    <i className="fa-solid fa-arrow-left"></i> Back to Classes
+                </div>
+
+                <div className="detail-header">
+                    <div className="detail-title-row">
+                        <div>
+                            <h1 style={{ fontWeight: 800, marginBottom: 4 }}>Teachers: {selectedClass.name}</h1>
+                            <div className="class-code">Class Code: {selectedClass.code || 'N/A'}</div>
+                        </div>
+                        <button className={`btn ${showForm ? 'btn-secondary' : 'btn-primary'}`} onClick={() => setShowForm(!showForm)}>
+                            {showForm ? 'Cancel' : <><i className="fa-solid fa-plus"></i> Add Teacher</>}
+                        </button>
+                    </div>
+                </div>
+
+                {showForm && (
+                    <div className="card mb-lg slide-down">
+                        <h3 className="mb-sm">Register New Teacher</h3>
+                        <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={addTeacher}>
+                            <div className="input-group">
+                                <label>Full Name</label>
+                                <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+                            </div>
+                            <div className="input-group">
+                                <label>Email Address</label>
+                                <input className="input" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+                            </div>
+                            <div className="input-group">
+                                <label>Phone Number</label>
+                                <input className="input" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} required />
+                            </div>
+                            <div className="input-group">
+                                <label>Password</label>
+                                <input className="input" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
+                            </div>
+                            <div className="input-group">
+                                <label>Residential Address</label>
+                                <input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
+                            </div>
+                            <button className="btn btn-success" type="submit" style={{ alignSelf: 'end' }}>Register Teacher</button>
+                        </form>
+                    </div>
+                )}
+
+                <div className="card">
+                    {teacherLoading ? (
+                        <div className="spinner"></div>
+                    ) : teachers.length === 0 ? (
+                        <div className="text-center py-lg text-muted">No teachers registered for this class.</div>
+                    ) : (
+                        <div className="table-wrapper" style={{ padding: 0 }}>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Instructor Details</th>
+                                        <th>Contact Info</th>
+                                        <th>Account Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {teachers.map(t => (
+                                        <tr key={t._id}>
+                                            <td>
+                                                {editingId === t._id ? (
+                                                    <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                                                ) : (
+                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</div>
+                                                )}
+                                                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>ID: {t._id.slice(-6).toUpperCase()}</div>
+                                            </td>
+                                            <td>
+                                                <div>{t.email}</div>
+                                                {editingId === t._id ? (
+                                                    <input className="input" style={{ marginTop: 4 }} value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+                                                ) : (
+                                                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{t.phone}</div>
+                                                )}
+                                            </td>
+                                            <td>
+                                                {editingId === t._id ? (
+                                                    <label className="flex items-center gap-xs cursor-pointer">
+                                                        <input type="checkbox" checked={editForm.active} onChange={e => setEditForm({ ...editForm, active: e.target.checked })} />
+                                                        <span>Active</span>
+                                                    </label>
+                                                ) : (
+                                                    <span className={`badge ${t.active ? 'badge-success' : 'badge-danger'}`}>
+                                                        {t.active ? 'Active' : 'Disabled'}
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td>
+                                                <div className="flex gap-sm">
+                                                    {editingId === t._id ? (
+                                                        <>
+                                                            <button className="btn btn-sm btn-success" onClick={saveEdit}>Save</button>
+                                                            <button className="btn btn-sm btn-ghost" onClick={() => setEditingId(null)}>Cancel</button>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <button className="btn btn-sm btn-secondary" onClick={() => startEdit(t)} title="Edit">
+                                                                <i className="fa-solid fa-pen-to-square"></i>
+                                                            </button>
+                                                            <button className="btn btn-sm btn-danger" onClick={() => deleteTeacher(t._id)} title="Delete">
+                                                                <i className="fa-solid fa-trash"></i>
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+                {error && <div className="badge badge-danger mt-md">{error}</div>}
+            </div>
+        );
+    }
 
     return (
         <div className="fade-in">
-            <div className="flex items-center justify-between mb-md">
-                <h2 style={{ fontWeight: 700 }}><i className="fa-solid fa-chalkboard-user" aria-hidden="true"></i> Teachers</h2>
-                <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
-                    {showForm ? <><i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Cancel</> : <><i className="fa-solid fa-plus" aria-hidden="true"></i> Add Teacher</>}
-                </button>
+            <div className="flex items-center justify-between mb-lg">
+                <div>
+                    <h1 style={{ fontWeight: 800 }}>Teacher Management</h1>
+                    <p className="text-muted">Select a class to manage its assigned teaching staff.</p>
+                </div>
             </div>
 
             {isSuper && (
                 <div className="card mb-md">
-                    <label style={{ fontWeight: 600, marginBottom: 8 }}>Select Faculty</label>
+                    <label style={{ fontWeight: 600, marginBottom: 8 }}>Select Faculty Scope</label>
                     <select className="input" value={selectedFaculty} onChange={e => setSelectedFaculty(e.target.value)}>
-                        <option value="">Choose faculty</option>
+                        <option value="">Choose academic faculty</option>
                         {faculties.map(f => <option key={f._id} value={f._id}>{f.name}</option>)}
                     </select>
                 </div>
             )}
 
-            {showForm && (
-                <div className="card mb-md">
-                    <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={addTeacher}>
-                        <div className="input-group">
-                            <label>Name</label>
-                            <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+            {loading ? (
+                <div className="spinner"></div>
+            ) : classes.length === 0 ? (
+                <div className="card text-center py-xl">
+                    <div className="text-muted">No classes found. Please create classes first to assign teachers.</div>
+                </div>
+            ) : (
+                <div className="class-grid">
+                    {classes.map(c => (
+                        <div key={c._id} className="class-card teacher-class-card" onClick={() => setSelectedClass(c)}>
+                            <div className="class-badge">Faculty Staff</div>
+                            <div>
+                                <div className="class-name">{c.name}</div>
+                                <div className="class-code">{c.code || 'No Code'}</div>
+                            </div>
+                            <div className="class-info">
+                                <i className="fa-solid fa-user-tie"></i>
+                                Manage Class Teachers
+                            </div>
                         </div>
-                        <div className="input-group">
-                            <label>Email</label>
-                            <input className="input" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
-                        </div>
-                        <div className="input-group">
-                            <label>Phone</label>
-                            <input className="input" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} required />
-                        </div>
-                        <div className="input-group">
-                            <label>Address</label>
-                            <input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
-                        </div>
-                        <div className="input-group">
-                            <label>Password</label>
-                            <input className="input" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
-                        </div>
-                        <div className="input-group">
-                            <label>Class</label>
-                            <select className="input" value={form.classId} onChange={e => setForm({ ...form, classId: e.target.value })} required>
-                                <option value="">Select class</option>
-                                {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
-                            </select>
-                        </div>
-                        <button className="btn btn-success" type="submit">Save</button>
-                    </form>
+                    ))}
                 </div>
             )}
-
-            {error && <div className="badge badge-danger mb-md">{error}</div>}
-
-            <div className="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Phone</th>
-                            <th>Class</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {teachers.map(t => {
-                            const cls = classes.find(c => c._id === t.classId);
-                            return (
-                                <tr key={t._id}>
-                                    <td style={{ fontWeight: 600 }}>
-                                        {editingId === t._id
-                                            ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
-                                            : t.name}
-                                    </td>
-                                    <td>{t.email}</td>
-                                    <td>
-                                        {editingId === t._id
-                                            ? <input className="input" value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
-                                            : t.phone}
-                                    </td>
-                                    <td>
-                                        {editingId === t._id
-                                            ? (
-                                                <select className="input" value={editForm.classId} onChange={e => setEditForm({ ...editForm, classId: e.target.value })}>
-                                                    <option value="">Select class</option>
-                                                    {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
-                                                </select>
-                                            ) : (cls ? cls.name : '—')}
-                                    </td>
-                                    <td>
-                                        {editingId === t._id
-                                            ? <input type="checkbox" checked={editForm.active} onChange={e => setEditForm({ ...editForm, active: e.target.checked })} />
-                                            : (t.active ? 'Active' : 'Inactive')}
-                                    </td>
-                                    <td>
-                                        {editingId === t._id ? (
-                                            <>
-                                                <button className="btn btn-sm btn-success" onClick={saveEdit}>Save</button>
-                                                <button className="btn btn-sm btn-ghost" onClick={() => setEditingId(null)}>Cancel</button>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <button className="btn btn-sm btn-info" onClick={() => startEdit(t)}>Edit</button>
-                                                <button className="btn btn-sm btn-danger" onClick={() => deleteTeacher(t._id)}>Delete</button>
-                                            </>
-                                        )}
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                        {teachers.length === 0 && (
-                            <tr><td colSpan="6" className="text-center text-muted" style={{ padding: 40 }}>No teachers found.</td></tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
+            {error && <div className="badge badge-danger mt-md">{error}</div>}
         </div>
     );
 }

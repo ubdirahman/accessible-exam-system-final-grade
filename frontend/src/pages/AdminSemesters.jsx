@@ -15,6 +15,14 @@ export default function AdminSemesters() {
     const [editingId, setEditingId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', startDate: '', endDate: '' });
 
+    // New states for semester detailing
+    const [selectedSemester, setSelectedSemester] = useState(null);
+    const [semesterClasses, setSemesterClasses] = useState([]);
+    const [classLoading, setClassLoading] = useState(false);
+    const [showClassForm, setShowClassForm] = useState(false);  // Wait, I already removed showClassForm and classForm in previous step.
+    // The previous step removed them. Let me just remove editingClassId and editClassForm carefully.
+
+
     const loadFaculties = async () => {
         if (!isSuper) return;
         try {
@@ -41,6 +49,19 @@ export default function AdminSemesters() {
         }
     };
 
+    const loadSemesterClasses = async (semesterId) => {
+        try {
+            setClassLoading(true);
+            const facultyId = isSuper ? selectedFaculty : user?.facultyId;
+            const res = await api.get('/classes', { params: { facultyId, semesterId } });
+            setSemesterClasses(res.data);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Failed to load classes');
+        } finally {
+            setClassLoading(false);
+        }
+    };
+
     useEffect(() => {
         loadFaculties();
     }, []);
@@ -49,6 +70,12 @@ export default function AdminSemesters() {
         const fid = isSuper ? selectedFaculty : user?.facultyId;
         if (fid) loadSemesters(fid);
     }, [selectedFaculty, user?.facultyId, isSuper]);
+
+    useEffect(() => {
+        if (selectedSemester) {
+            loadSemesterClasses(selectedSemester._id);
+        }
+    }, [selectedSemester]);
 
     const createSemester = async (e) => {
         e.preventDefault();
@@ -64,19 +91,22 @@ export default function AdminSemesters() {
         }
     };
 
-    const deleteSemester = async (id) => {
+    const deleteSemester = async (e, id) => {
+        e.stopPropagation();
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         if (!facultyId) return;
         if (!window.confirm('Delete this semester? This cannot be undone.')) return;
         try {
             await api.delete(`/semesters/${id}`, { params: { facultyId } });
             loadSemesters(facultyId);
+            if (selectedSemester?._id === id) setSelectedSemester(null);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to delete semester');
         }
     };
 
-    const startEdit = (s) => {
+    const startEdit = (e, s) => {
+        e.stopPropagation();
         setEditingId(s._id);
         setEditForm({
             name: s.name,
@@ -85,7 +115,8 @@ export default function AdminSemesters() {
         });
     };
 
-    const saveEdit = async () => {
+    const saveEdit = async (e) => {
+        e.stopPropagation();
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         try {
             await api.put(`/semesters/${editingId}`, { ...editForm, facultyId });
@@ -96,23 +127,77 @@ export default function AdminSemesters() {
         }
     };
 
+
     const formatDate = (dateString) => {
         if (!dateString) return '—';
         return new Date(dateString).toLocaleDateString();
     }
 
+    if (selectedSemester) {
+        return (
+            <div className="fade-in">
+                <div className="back-link" onClick={() => setSelectedSemester(null)}>
+                    <i className="fa-solid fa-arrow-left"></i> Back to Semesters
+                </div>
+
+                <div className="detail-header">
+                    <div className="detail-title-row">
+                        <div>
+                            <h1 style={{ fontWeight: 800, marginBottom: 4 }}>{selectedSemester.name}</h1>
+                            <div className="class-code">
+                                {formatDate(selectedSemester.startDate)} - {formatDate(selectedSemester.endDate)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="card">
+                    <h3 className="mb-md">Classes in this Semester</h3>
+                    {classLoading ? (
+                        <div className="spinner" />
+                    ) : semesterClasses.length === 0 ? (
+                        <div className="text-muted">No classes found for this semester.</div>
+                    ) : (
+                        <div className="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Class Name</th>
+                                        <th>Code</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {semesterClasses.map(c => (
+                                        <tr key={c._id}>
+                                            <td style={{ fontWeight: 600 }}>{c.name}</td>
+                                            <td>{c.code || '—'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+                {error && <div className="badge badge-danger mt-md">{error}</div>}
+            </div>
+        );
+    }
+
     return (
         <div className="fade-in">
             <div className="flex items-center justify-between mb-md">
-                <h1 style={{ fontWeight: 800 }}>Semesters</h1>
+                <div>
+                    <h1 style={{ fontWeight: 800 }}>Manage Semesters</h1>
+                    <p className="text-muted">Create and manage semesters for your academic calendar.</p>
+                </div>
                 <button 
                     className={`btn ${showAddForm ? 'btn-secondary' : 'btn-primary'}`} 
                     onClick={() => setShowAddForm(!showAddForm)}
                 >
                     {showAddForm ? (
-                        <><i className="fa-solid fa-xmark" aria-hidden="true"></i> Cancel</>
+                        <><i className="fa-solid fa-xmark"></i> Cancel</>
                     ) : (
-                        <><i className="fa-solid fa-plus" aria-hidden="true"></i> Add Semester</>
+                        <><i className="fa-solid fa-plus"></i> Add Semester</>
                     )}
                 </button>
             </div>
@@ -129,7 +214,7 @@ export default function AdminSemesters() {
 
             {showAddForm && (
                 <div className="card mb-lg slide-down">
-                    <h3 className="mb-sm">Add Semester</h3>
+                    <h3 className="mb-sm">Add New Semester</h3>
                     <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={createSemester}>
                         <div className="input-group">
                             <label>Semester Name</label>
@@ -138,12 +223,10 @@ export default function AdminSemesters() {
                         <div className="input-group">
                             <label>Start Date</label>
                             <input className="input" type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} />
-                            <small className="text-muted">mm/dd/yyyy</small>
                         </div>
                         <div className="input-group">
                             <label>End Date</label>
                             <input className="input" type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} />
-                            <small className="text-muted">mm/dd/yyyy</small>
                         </div>
                         <button className="btn btn-primary" type="submit">Save Semester</button>
                     </form>
@@ -151,64 +234,60 @@ export default function AdminSemesters() {
                 </div>
             )}
 
-            <div className="card">
-                <div className="flex items-center justify-between mb-sm">
-                    <h3>Existing Semesters</h3>
-                    <button className="btn btn-ghost btn-sm" onClick={() => loadSemesters(isSuper ? selectedFaculty : user?.facultyId)}>Refresh</button>
+            {loading ? (
+                <div className="spinner" />
+            ) : semesters.length === 0 ? (
+                <div className="card text-center py-lg">
+                    <div className="text-muted">No semesters found. Click "Add Semester" to create one.</div>
                 </div>
-                {loading ? (
-                    <div className="spinner" />
-                ) : semesters.length === 0 ? (
-                    <div className="text-muted">No semesters found.</div>
-                ) : (
-                    <div className="table-wrapper">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Start Date</th>
-                                    <th>End Date</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {semesters.map(s => (
-                                    <tr key={s._id}>
-                                        <td style={{ fontWeight: 600 }}>
-                                            {editingId === s._id
-                                                ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
-                                                : s.name}
-                                        </td>
-                                        <td>
-                                            {editingId === s._id
-                                                ? <input className="input" type="date" value={editForm.startDate} onChange={e => setEditForm({ ...editForm, startDate: e.target.value })} />
-                                                : formatDate(s.startDate)}
-                                        </td>
-                                        <td>
-                                            {editingId === s._id
-                                                ? <input className="input" type="date" value={editForm.endDate} onChange={e => setEditForm({ ...editForm, endDate: e.target.value })} />
-                                                : formatDate(s.endDate)}
-                                        </td>
-                                        <td>
-                                            {editingId === s._id ? (
-                                                <>
-                                                    <button className="btn btn-sm btn-success" onClick={saveEdit}>Save</button>
-                                                    <button className="btn btn-sm btn-ghost" onClick={() => setEditingId(null)}>Cancel</button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <button className="btn btn-sm btn-info" onClick={() => startEdit(s)}>Edit</button>
-                                                    <button className="btn btn-sm btn-danger" onClick={() => deleteSemester(s._id)}>Delete</button>
-                                                </>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
+            ) : (
+                <div className="class-grid">
+                    {semesters.map(s => (
+                        <div key={s._id} className="class-card" onClick={() => setSelectedSemester(s)}>
+                            <div className="class-badge">Active</div>
+                            <div>
+                                <div className="class-name">
+                                    {editingId === s._id ? (
+                                        <input 
+                                            className="input" 
+                                            value={editForm.name} 
+                                            onClick={e => e.stopPropagation()}
+                                            onChange={e => setEditForm({ ...editForm, name: e.target.value })} 
+                                        />
+                                    ) : s.name}
+                                </div>
+                                <div className="class-code">
+                                    {formatDate(s.startDate)} - {formatDate(s.endDate)}
+                                </div>
+                            </div>
+
+                            <div className="class-info">
+                                <i className="fa-solid fa-calendar-days"></i> 
+                                View Classes & Schedule
+                            </div>
+
+                            <div className="class-actions-overlay">
+                                {editingId === s._id ? (
+                                    <>
+                                        <button className="btn btn-sm btn-success" onClick={saveEdit}>Save</button>
+                                        <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); setEditingId(null); }}>Cancel</button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button className="btn btn-sm btn-secondary" onClick={(e) => startEdit(e, s)}>
+                                            <i className="fa-solid fa-pen-to-square"></i>
+                                        </button>
+                                        <button className="btn btn-sm btn-danger" onClick={(e) => deleteSemester(e, s._id)}>
+                                            <i className="fa-solid fa-trash"></i>
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {error && <div className="badge badge-danger mt-md">{error}</div>}
         </div>
     );
 }

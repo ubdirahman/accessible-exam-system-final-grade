@@ -1,23 +1,31 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
 
 export default function ExamCreator() {
+    const { id } = useParams();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const isEdit = !!id;
+
     const isSuper = user?.role === 'super_admin';
     const isTeacher = user?.role === 'teacher';
+    
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
     const [timeLimit, setTimeLimit] = useState(60);
     const [active, setActive] = useState(false);
+    
     const [faculties, setFaculties] = useState([]);
     const [selectedFaculty, setSelectedFaculty] = useState(user?.facultyId || '');
+    
     const [classes, setClasses] = useState([]);
     const [selectedClass, setSelectedClass] = useState(user?.classId || '');
+    
     const [subjects, setSubjects] = useState([]);
     const [selectedSubject, setSelectedSubject] = useState('');
+    
     const [sections, setSections] = useState([
         {
             name: 'Part 1',
@@ -36,43 +44,70 @@ export default function ExamCreator() {
     ]);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(isEdit);
 
     useEffect(() => {
-        const loadFaculties = async () => {
-            if (!isSuper) return;
+        const loadInitialData = async () => {
             try {
-                const res = await api.get('/faculties');
-                setFaculties(res.data);
-                if (!selectedFaculty && res.data.length > 0) {
-                    setSelectedFaculty(res.data[0]._id);
+                if (isSuper) {
+                    const res = await api.get('/faculties');
+                    setFaculties(res.data);
+                }
+
+                if (isEdit) {
+                    const res = await api.get(`/exams/${id}`);
+                    const { exam, questions } = res.data;
+                    
+                    setTitle(exam.title);
+                    setDescription(exam.description || '');
+                    setTimeLimit(exam.timeLimit);
+                    setActive(exam.active);
+                    setSelectedFaculty(exam.facultyId || '');
+                    setSelectedClass(exam.classId || '');
+                    setSelectedSubject(exam.subjectId || '');
+
+                    // Map questions back into sections
+                    const mappedSections = exam.sections.map(sec => {
+                        return {
+                            ...sec,
+                            questions: questions.filter(q => q.sectionId === sec._id)
+                        };
+                    });
+                    
+                    if (mappedSections.length > 0) {
+                        setSections(mappedSections);
+                    }
                 }
             } catch (err) {
-                setError(err.response?.data?.message || 'Failed to load faculties');
+                setError('Failed to load exam data.');
+            } finally {
+                setLoading(false);
             }
         };
-        loadFaculties();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        loadInitialData();
+    }, [id, isEdit, isSuper]);
 
-    // load classes for admin/super
+    useEffect(() => {
+        if (isTeacher && user?.classId && !selectedClass && !isEdit) {
+            setSelectedClass(user.classId._id || user.classId);
+        }
+    }, [isTeacher, user, selectedClass, isEdit]);
+
+    // load classes
     useEffect(() => {
         const loadClasses = async () => {
             try {
                 if (isTeacher) {
                     const res = await api.get('/classes/my');
                     setClasses(res.data);
-                    if (!selectedClass && res.data.length > 0) setSelectedClass(res.data[0]._id);
                 } else {
                     const facultyId = isSuper ? selectedFaculty : user?.facultyId;
                     if (!facultyId) return;
                     const res = await api.get('/classes', { params: { facultyId } });
                     setClasses(res.data);
-                    if (!selectedClass && res.data.length > 0) {
-                        setSelectedClass(res.data[0]._id);
-                    }
                 }
             } catch (err) {
-                setError(err.response?.data?.message || 'Failed to load classes');
+                console.error('Error loading classes:', err);
             }
         };
         loadClasses();
@@ -90,24 +125,13 @@ export default function ExamCreator() {
                     if (!facultyId) return;
                     const res = await api.get('/subjects', { params: { facultyId } });
                     setSubjects(res.data);
-                    if (!selectedSubject && res.data.length > 0) setSelectedSubject(res.data[0]._id);
                 }
             } catch (err) {
-                setError(err.response?.data?.message || 'Failed to load subjects');
+                console.error('Error loading subjects:', err);
             }
         };
         loadSubjects();
     }, [isTeacher, isSuper, selectedFaculty, user?.facultyId]);
-
-    useEffect(() => {
-        if (!isTeacher) return;
-        const filtered = subjects.filter(s => (s.classId?._id || s.classId) === selectedClass);
-        if (filtered.length > 0) {
-            setSelectedSubject(filtered[0]._id);
-        } else {
-            setSelectedSubject('');
-        }
-    }, [selectedClass, subjects, isTeacher]);
 
     const addSection = () => {
         setSections([...sections, { name: `Part ${sections.length + 1}`, questionType: 'mcq', questions: [] }]);
@@ -166,36 +190,42 @@ export default function ExamCreator() {
 
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
-            if (isSuper && !facultyId) {
-                setError('Select a faculty for this exam.');
-                setSaving(false);
-                return;
-            }
-            const activeFlag = isTeacher ? false : active;
-            const classId = isTeacher ? (selectedClass || user?.classId || null) : selectedClass || null;
-            const subjectId = selectedSubject || null;
-            await api.post('/exams', { title, description, timeLimit, sections, active: activeFlag, facultyId, classId, subjectId });
-            if (user?.role === 'teacher') {
-                navigate('/teacher/dashboard');
+            const payload = { 
+                title, 
+                description, 
+                timeLimit, 
+                sections, 
+                active: isTeacher ? active : active, // maintain active if edit
+                facultyId, 
+                classId: selectedClass || null, 
+                subjectId: selectedSubject || null 
+            };
+
+            if (isEdit) {
+                await api.put(`/exams/${id}`, payload);
             } else {
-                navigate('/admin/dashboard');
+                await api.post('/exams', payload);
             }
+
+            navigate(user?.role === 'teacher' ? '/teacher/dashboard' : '/admin/dashboard');
         } catch (err) {
-            setError(err.response?.data?.message || 'Error creating exam.');
+            setError(err.response?.data?.message || 'Error saving exam.');
         } finally {
             setSaving(false);
         }
     };
+
+    if (loading) return <div className="spinner"></div>;
 
     return (
         <div className="page">
             <div className="app-container">
                 <div className="flex items-center justify-between mb-md">
                     <h1 style={{ fontWeight: 800, fontSize: 'var(--font-size-xl)' }}>
-                        <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i> Create Exam
+                        <i className={`fa-solid ${isEdit ? 'fa-pen-to-square' : 'fa-plus-circle'}`} aria-hidden="true"></i> {isEdit ? 'Edit Exam' : 'Create Exam'}
                     </h1>
-                    <button className="btn btn-secondary" onClick={() => navigate('/admin/dashboard')}>
-                        <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Dashboard
+                    <button className="btn btn-secondary" onClick={() => navigate(-1)}>
+                        <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Back
                     </button>
                 </div>
 
@@ -221,49 +251,47 @@ export default function ExamCreator() {
                             <label>Title</label>
                             <input className="input" value={title} onChange={e => setTitle(e.target.value)} required placeholder="e.g., Midterm Exam" />
                         </div>
-                        <div className="input-group">
-                            <label>Class</label>
-                            <select
-                                className="input"
-                                value={selectedClass}
-                                onChange={e => setSelectedClass(e.target.value)}
-                                required
-                            >
-                                <option value="">Select class</option>
-                                {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
-                            </select>
-                        </div>
-                        <div className="input-group">
-                            <label>Subject</label>
-                            <select
-                                className="input"
-                                value={selectedSubject}
-                                onChange={e => setSelectedSubject(e.target.value)}
-                                required
-                                disabled={!selectedClass}
-                            >
-                                <option value="">Select subject</option>
-                                {subjects
-                                    .filter(s => !selectedClass || (s.classId?._id || s.classId) === selectedClass)
-                                    .map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                            </select>
+                        <div className="grid-2 gap-md">
+                            <div className="input-group">
+                                <label>Class</label>
+                                <select 
+                                    className="input" 
+                                    value={selectedClass} 
+                                    onChange={e => setSelectedClass(e.target.value)} 
+                                    required 
+                                    disabled={isTeacher}
+                                >
+                                    <option value="">Select class</option>
+                                    {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
+                                </select>
+                                {isTeacher && <small className="text-muted">Locked to your assigned class.</small>}
+                            </div>
+                            <div className="input-group">
+                                <label>Subject</label>
+                                <select className="input" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} required disabled={!selectedClass}>
+                                    <option value="">Select subject</option>
+                                    {subjects
+                                        .filter(s => !selectedClass || (s.classId?._id || s.classId) === selectedClass)
+                                        .map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+                                </select>
+                            </div>
                         </div>
                         <div className="input-group">
                             <label>Description</label>
-                            <textarea className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description of the exam" rows={3} />
+                            <textarea className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description of the exam" rows={2} />
                         </div>
-                        <div className="input-group">
-                            <label>Time Limit (minutes)</label>
-                            <input className="input" type="number" value={timeLimit} onChange={e => setTimeLimit(Number(e.target.value))} min={1} max={300} required />
-                        </div>
-                        {!isTeacher && (
+                        <div className="grid-2 gap-md">
                             <div className="input-group">
-                                <label>
+                                <label>Time Limit (minutes)</label>
+                                <input className="input" type="number" value={timeLimit} onChange={e => setTimeLimit(Number(e.target.value))} min={1} max={600} required />
+                            </div>
+                            <div className="input-group flex items-end">
+                                <label className="flex items-center gap-sm cursor-pointer" style={{ marginBottom: 12 }}>
                                     <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
-                                    {' '}Make this exam active immediately
+                                    <span>Active Exam</span>
                                 </label>
                             </div>
-                        )}
+                        </div>
                     </div>
 
                     {sections.map((section, secIdx) => (
@@ -278,113 +306,116 @@ export default function ExamCreator() {
                                         required
                                     />
                                 </div>
-                                <div className="input-group" style={{ minWidth: 180, marginBottom: 0 }}>
-                                    <label>Question Type</label>
+                                <div className="input-group" style={{ minWidth: 160, marginBottom: 0 }}>
+                                    <label>Default Type</label>
                                     <select
                                         className="input"
                                         value={section.questionType || 'mcq'}
                                         onChange={e => updateSection(secIdx, 'questionType', e.target.value)}
                                     >
                                         <option value="mcq">MCQ</option>
-                                        <option value="true-false">True / False</option>
+                                        <option value="true-false">True/False</option>
                                         <option value="open-ended">Open-Ended</option>
                                     </select>
                                 </div>
                                 {sections.length > 1 && (
-                                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeSection(secIdx)}>
-                                        <i className="fa-solid fa-trash" aria-hidden="true"></i> Remove Section
+                                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeSection(secIdx)} style={{ marginTop: 22 }}>
+                                        <i className="fa-solid fa-trash"></i>
                                     </button>
                                 )}
                             </div>
 
-                            {section.questions.map((q, qIdx) => (
-                                <div key={qIdx} className="card" style={{ marginBottom: 16, background: 'var(--bg-secondary)' }}>
-                                    <div className="flex items-center justify-between mb-md">
-                                        <span className="badge badge-info">
-                                            {q.type === 'mcq' ? 'MCQ' : q.type === 'true-false' ? 'True/False' : 'Open-Ended'}
-                                        </span>
-                                        <div className="flex gap-sm items-center">
-                                            <label style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600 }}>Points:</label>
-                                            <input
-                                                className="input"
-                                                type="number"
-                                                value={q.points}
-                                                onChange={e => updateQuestion(secIdx, qIdx, 'points', Number(e.target.value))}
-                                                min={1}
-                                                style={{ width: 70, padding: '8px 12px' }}
-                                            />
-                                            <button type="button" className="btn btn-sm btn-danger" onClick={() => removeQuestion(secIdx, qIdx)}><i className="fa-solid fa-circle-xmark" aria-hidden="true"></i></button>
+                            <div className="questions-container">
+                                {section.questions.map((q, qIdx) => (
+                                    <div key={qIdx} className="card bg-secondary mb-sm border-none shadow-none">
+                                        <div className="flex items-center justify-between mb-sm">
+                                            <div className="flex gap-sm items-center">
+                                                <span className="badge badge-info" style={{ textTransform: 'uppercase', fontSize: 10 }}>{q.type}</span>
+                                                <input 
+                                                    className="input-inline" 
+                                                    type="number" 
+                                                    value={q.points} 
+                                                    onChange={e => updateQuestion(secIdx, qIdx, 'points', Number(e.target.value))}
+                                                    style={{ width: 40, border: 'none', background: 'transparent', fontWeight: 800, textAlign: 'center' }}
+                                                /> pts
+                                            </div>
+                                            <button type="button" className="btn btn-icon text-danger" onClick={() => removeQuestion(secIdx, qIdx)}>
+                                                <i className="fa-solid fa-trash-can"></i>
+                                            </button>
                                         </div>
-                                    </div>
-
-                                    <div className="input-group">
-                                        <label>Question Text</label>
-                                        <textarea
-                                            className="input"
-                                            value={q.questionText}
-                                            onChange={e => updateQuestion(secIdx, qIdx, 'questionText', e.target.value)}
-                                            required
-                                            rows={2}
-                                        />
-                                    </div>
-
-                                    {(q.type === 'mcq' || q.type === 'true-false') && (
-                                        <div style={{ marginBottom: 12 }}>
-                                            {q.options.map((opt, optIdx) => (
-                                                <div key={opt.label} className="flex gap-sm items-center" style={{ marginBottom: 8 }}>
-                                                    <span className="option-label" style={{ width: 36, height: 36, fontSize: 14 }}>{opt.label}</span>
-                                                    <input
-                                                        className="input"
-                                                        value={opt.text}
-                                                        onChange={e => updateOption(secIdx, qIdx, optIdx, e.target.value)}
-                                                        placeholder={`Option ${opt.label}`}
-                                                        required
-                                                        disabled={q.type === 'true-false'}
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {q.type !== 'open-ended' && (
-                                        <div className="input-group" style={{ marginBottom: 0 }}>
-                                            <label>Correct Answer {q.type === 'mcq' || q.type === 'true-false' ? '(A/B/C/D)' : ''}</label>
-                                            <input
+                                        <div className="input-group mb-sm">
+                                            <textarea
                                                 className="input"
-                                                value={q.correctAnswer}
-                                                onChange={e => updateQuestion(secIdx, qIdx, 'correctAnswer', e.target.value.toUpperCase())}
+                                                value={q.questionText}
+                                                onChange={e => updateQuestion(secIdx, qIdx, 'questionText', e.target.value)}
+                                                placeholder="Enter question text..."
                                                 required
-                                                placeholder={q.type === 'mcq' || q.type === 'true-false' ? 'e.g., A' : ''}
-                                                maxLength={1}
+                                                rows={1}
                                             />
                                         </div>
-                                    )}
-                                </div>
-                            ))}
+                                        
+                                        {(q.type === 'mcq' || q.type === 'true-false') && (
+                                            <div className="grid-2 gap-sm mb-sm">
+                                                {q.options.map((opt, optIdx) => (
+                                                    <div key={opt.label} className="flex gap-sm items-center">
+                                                        <span className={`option-label ${q.correctAnswer === opt.label ? 'bg-primary text-white' : ''}`} 
+                                                              onClick={() => updateQuestion(secIdx, qIdx, 'correctAnswer', opt.label)}
+                                                              style={{ width: 28, height: 28, fontSize: 12, cursor: 'pointer' }}>
+                                                            {opt.label}
+                                                        </span>
+                                                        <input
+                                                            className="input"
+                                                            value={opt.text}
+                                                            onChange={e => updateOption(secIdx, qIdx, optIdx, e.target.value)}
+                                                            placeholder={`Option ${opt.label}`}
+                                                            required
+                                                            disabled={q.type === 'true-false'}
+                                                            style={{ padding: '4px 10px', fontSize: 13 }}
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
 
-                            <div className="flex gap-sm" style={{ flexWrap: 'wrap' }}>
-                                <button
-                                    type="button"
-                                    className="btn btn-sm btn-secondary"
-                                    onClick={() => addQuestion(secIdx)}
-                                >
-                                    <i className="fa-solid fa-plus" aria-hidden="true"></i> Add {section.questionType === 'true-false'
-                                        ? 'True/False'
-                                        : section.questionType === 'open-ended'
-                                            ? 'Open-Ended'
-                                            : 'MCQ'}
-                                </button>
+                                        {q.type !== 'open-ended' && (
+                                            <div className="flex items-center justify-end gap-sm">
+                                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Correct:</span>
+                                                <input
+                                                    className="input"
+                                                    value={q.correctAnswer}
+                                                    onChange={e => {
+                                                        let val = e.target.value.toUpperCase();
+                                                        if (q.type === 'mcq' && !['A', 'B', 'C', 'D'].includes(val) && val !== '') return;
+                                                        if (q.type === 'true-false' && !['A', 'B'].includes(val) && val !== '') return;
+                                                        updateQuestion(secIdx, qIdx, 'correctAnswer', val);
+                                                    }}
+                                                    required
+                                                    placeholder={q.type === 'true-false' ? "A/B" : "A-D"}
+                                                    maxLength={1}
+                                                    style={{ width: 40, textAlign: 'center', padding: '4px' }}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
+
+                            <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => addQuestion(secIdx)}
+                            >
+                                <i className="fa-solid fa-plus"></i> Add Question
+                            </button>
                         </div>
                     ))}
 
-                    <button type="button" className="btn btn-secondary mb-md" onClick={addSection}>
-                        <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Section
-                    </button>
-
-                    <div className="text-center mt-lg">
-                        <button type="submit" className="btn btn-primary btn-lg" disabled={saving}>
-                            {saving ? <><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Creating...</> : <><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Create Exam</>}
+                    <div className="flex justify-between items-center mt-lg">
+                        <button type="button" className="btn btn-secondary" onClick={addSection}>
+                            <i className="fa-solid fa-layer-group"></i> Add Section
+                        </button>
+                        <button type="submit" className="btn btn-primary btn-lg px-xl" disabled={saving}>
+                            {saving ? 'Saving...' : (isEdit ? 'Update Exam' : 'Create Exam')}
                         </button>
                     </div>
                 </form>

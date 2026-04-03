@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTTS } from '../hooks/useTTS';
 import api from '../api/axios';
 
 export default function AdminExams() {
     const { speak } = useTTS();
+    const navigate = useNavigate();
     const [exams, setExams] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [analytics, setAnalytics] = useState({});
-    const [editingId, setEditingId] = useState(null);
-    const [editForm, setEditForm] = useState({ title: '', timeLimit: 60, description: '', active: false });
+    
+    // UI States
+    const [selectedExam, setSelectedExam] = useState(null); // For Detail Modal
 
     useEffect(() => {
         loadExams();
@@ -53,31 +55,6 @@ export default function AdminExams() {
         }
     };
 
-    const startEdit = (exam) => {
-        setEditingId(exam._id);
-        setEditForm({
-            title: exam.title,
-            timeLimit: exam.timeLimit,
-            description: exam.description || '',
-            active: exam.active
-        });
-    };
-
-    const saveEdit = async () => {
-        try {
-            await api.put(`/exams/${editingId}`, {
-                title: editForm.title,
-                description: editForm.description,
-                timeLimit: Number(editForm.timeLimit),
-                active: editForm.active
-            });
-            setEditingId(null);
-            loadExams();
-        } catch (err) {
-            setError(err.response?.data?.message || 'Failed to save exam.');
-        }
-    };
-
     const deleteExam = async (examId) => {
         if (!confirm('Delete this exam and all related data?')) return;
         try {
@@ -101,90 +78,125 @@ export default function AdminExams() {
     if (loading) return <div className="spinner"></div>;
 
     return (
-        <div>
-            <div className="flex items-center justify-between mb-md">
-                <h2 style={{ fontWeight: 700 }}><i className="fa-solid fa-clipboard-list" aria-hidden="true"></i> List of Exams</h2>
-                <Link to="/admin/create-exam" className="btn btn-primary btn-sm">
-                    <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Exam
+        <div className="fade-in">
+            <div className="flex items-center justify-between mb-lg">
+                <div>
+                    <h1 style={{ fontWeight: 800 }}>Examinations</h1>
+                    <p className="text-muted">Manage academic exams and sessions.</p>
+                </div>
+                <Link to="/admin/create-exam" className="btn btn-primary">
+                    <i className="fa-solid fa-plus"></i> Add New Exam
                 </Link>
             </div>
 
             {error && <div className="badge badge-danger mb-md">{error}</div>}
 
-            <div className="table-wrapper">
+            {/* Detail Modal */}
+            {selectedExam && (
+                <div className="modal-overlay" onClick={() => setSelectedExam(null)}>
+                    <div className="modal-content slide-up" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
+                        <div className="modal-header">
+                            <h2 style={{ fontWeight: 800 }}>{selectedExam.title}</h2>
+                            <button className="btn btn-ghost" onClick={() => setSelectedExam(null)}><i className="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="grid-2 mb-md">
+                                <div className="info-item">
+                                    <label>Subject</label>
+                                    <div className="value">{selectedExam.subjectId?.name || 'Manual Entry'}</div>
+                                </div>
+                                <div className="info-item">
+                                    <label>Instructor</label>
+                                    <div className="value">{selectedExam.subjectId?.teacherId?.name || selectedExam.createdBy?.name || 'Administrator'}</div>
+                                </div>
+                                <div className="info-item">
+                                    <label>Duration</label>
+                                    <div className="value">{selectedExam.timeLimit} Minutes</div>
+                                </div>
+                                <div className="info-item">
+                                    <label>Status</label>
+                                    <div className={`value ${selectedExam.active ? 'text-success' : 'text-danger'}`}>
+                                        {selectedExam.active ? 'Accepting Responses' : 'Hidden / Closed'}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="mb-md">
+                                <label>Description</label>
+                                <p className="text-muted" style={{ lineHeight: 1.6 }}>{selectedExam.description || 'No description provided.'}</p>
+                            </div>
+                            <div className="card bg-secondary mb-md">
+                                <h4 className="mb-xs">Quick Stats</h4>
+                                <div className="flex justify-between">
+                                    <span>Started: <strong>{analytics[selectedExam._id]?.participants ?? 0}</strong></span>
+                                    <span>Finished: <strong>{analytics[selectedExam._id]?.finishedCount ?? 0}</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="modal-footer flex gap-sm">
+                            <button className="btn btn-primary flex-1" onClick={() => navigate(`/admin/exams/edit/${selectedExam._id}`)}>
+                                <i className="fa-solid fa-pen-to-square"></i> Full Edit
+                            </button>
+                            <Link to={`/admin/exams/${selectedExam._id}/responses`} className="btn btn-info flex-1">
+                                <i className="fa-solid fa-clipboard-question"></i> Responses
+                            </Link>
+                            <button className="btn btn-secondary" onClick={() => setSelectedExam(null)}>Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="table-wrapper card" style={{ padding: 0, overflow: 'hidden' }}>
                 <table>
-                    <thead>
+                    <thead style={{ background: 'var(--bg-secondary)' }}>
                         <tr>
-                            <th>Title</th>
-                            <th>Time (min)</th>
-                            <th>Description</th>
-                            <th>Students</th>
+                            <th style={{ paddingLeft: 24 }}>Subject & Teacher</th>
+                            <th>Exam Title</th>
+                            <th>Time</th>
                             <th>Status</th>
-                            <th>Codes</th>
-                            <th>Actions</th>
+                            <th style={{ paddingRight: 24 }}>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {exams.map((exam) => (
                             <tr key={exam._id}>
-                                <td style={{ fontWeight: 600 }}>
-                                    {editingId === exam._id
-                                        ? <input className="input" value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value })} />
-                                        : exam.title}
+                                <td style={{ paddingLeft: 24 }}>
+                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{exam.subjectId?.name || '—'}</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{exam.subjectId?.teacherId?.name || exam.createdBy?.name || 'Admin'}</div>
                                 </td>
                                 <td>
-                                    {editingId === exam._id
-                                        ? <input className="input" type="number" min={1} value={editForm.timeLimit} onChange={e => setEditForm({ ...editForm, timeLimit: e.target.value })} />
-                                        : exam.timeLimit}
-                                </td>
-                                <td style={{ maxWidth: 220 }}>
-                                    {editingId === exam._id
-                                        ? <input className="input" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
-                                        : (exam.description || '—')}
+                                    <div style={{ fontWeight: 600 }}>{exam.title}</div>
                                 </td>
                                 <td>
-                                    <span className="badge badge-info">
-                                        {analytics[exam._id]?.participants ?? 0} started / {analytics[exam._id]?.finishedCount ?? 0} finished
-                                    </span>
+                                    <span>{exam.timeLimit}m</span>
                                 </td>
                                 <td>
                                     <span className={`badge ${exam.active ? 'badge-success' : 'badge-danger'}`}>
-                                        <i className={`fa-solid ${exam.active ? 'fa-circle-check' : 'fa-circle-xmark'}`} aria-hidden="true"></i> {exam.active ? 'Active' : 'Inactive'}
+                                        {exam.active ? 'Active' : 'Inactive'}
                                     </span>
                                 </td>
-                                <td>
-                                    {exam.examCodes?.filter(c => !c.used).length || 0} available / {exam.examCodes?.length || 0} total
-                                </td>
-                                <td>
-                                    <div className="flex gap-sm" style={{ flexWrap: 'wrap' }}>
-                                        {editingId === exam._id ? (
-                                            <>
-                                                <button className="btn btn-sm btn-success" onClick={saveEdit}><i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save</button>
-                                                <button className="btn btn-sm btn-ghost" onClick={() => setEditingId(null)}><i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Cancel</button>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <button className="btn btn-sm btn-secondary" onClick={() => toggleExamActive(exam._id, exam.active)}>
-                                                    <i className={`fa-solid ${exam.active ? 'fa-pause' : 'fa-play'}`} aria-hidden="true"></i>
-                                                </button>
-                                                <button className="btn btn-sm btn-primary" onClick={() => generateCodes(exam._id)}>
-                                                    <i className="fa-solid fa-key" aria-hidden="true"></i> Codes
-                                                </button>
-                                                <button className="btn btn-sm btn-info" onClick={() => startEdit(exam)}><i className="fa-solid fa-pen" aria-hidden="true"></i> Edit</button>
-                                                <Link to={`/admin/exams/${exam._id}/responses`} className="btn btn-sm btn-info">
-                                                    <i className="fa-solid fa-clipboard-question" aria-hidden="true"></i> Responses
-                                                </Link>
-                                                <button className="btn btn-sm btn-danger" onClick={() => deleteExam(exam._id)}>
-                                                    <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                                                </button>
-                                            </>
-                                        )}
+                                <td style={{ paddingRight: 24 }}>
+                                    <div className="flex gap-sm">
+                                        <button className="btn btn-sm btn-info" onClick={() => setSelectedExam(exam)}>
+                                            <i className="fa-solid fa-eye"></i> View
+                                        </button>
+                                        <button className="btn btn-sm btn-info" onClick={() => navigate(`/admin/exams/${exam._id}/responses`)}>
+                                            <i className="fa-solid fa-list"></i> Responses
+                                        </button>
+                                        <button className="btn btn-sm btn-secondary" onClick={() => navigate(`/admin/exams/edit/${exam._id}`)}>
+                                            <i className="fa-solid fa-pen"></i> Edit
+                                        </button>
+                                        <button className="btn btn-sm btn-secondary" onClick={() => toggleExamActive(exam._id, exam.active)}>
+                                            <i className={`fa-solid ${exam.active ? 'fa-pause' : 'fa-play'}`}></i>
+                                        </button>
+                                        <button className="btn btn-sm btn-danger" onClick={() => deleteExam(exam._id)}>
+                                            <i className="fa-solid fa-trash"></i>
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
                         ))}
                         {exams.length === 0 && (
-                            <tr><td colSpan="7" className="text-center text-muted" style={{ padding: 40 }}>No exams yet.</td></tr>
+                            <tr><td colSpan="6" className="text-center text-muted" style={{ padding: 60 }}>No examinations found. Create one to get started.</td></tr>
                         )}
                     </tbody>
                 </table>
