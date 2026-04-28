@@ -5,9 +5,17 @@ const Exam = require('../models/Exam');
 const Response = require('../models/Response');
 const Question = require('../models/Question');
 const Student = require('../models/Student');
-const { generateResultPDF } = require('../utils/pdfExport');
+const Faculty = require('../models/Faculty');
+const Classroom = require('../models/Classroom');
+const Subject = require('../models/Subject');
+const { generateResultPDF, generateClassMatrixPDF } = require('../utils/pdfExport');
 
 const router = express.Router();
+
+function resolveFacultyId(req) {
+    if (req.user.role === 'admin') return req.user.facultyId;
+    return req.query.facultyId || req.user.facultyId || null;
+}
 
 // Helper: ensure results match latest teacher grading
 async function recomputeResult(examId, studentId) {
@@ -60,7 +68,193 @@ async function recomputeResult(examId, studentId) {
     }
 }
 
+async function buildClassMatrixData(facultyId, classId) {
+    if (!facultyId) {
+        const error = new Error('facultyId is required.');
+        error.status = 400;
+        throw error;
+    }
+
+    if (!classId) {
+        const error = new Error('classId is required.');
+        error.status = 400;
+        throw error;
+    }
+
+    const [faculty, classroom] = await Promise.all([
+        Faculty.findById(facultyId).select('name code'),
+        Classroom.findOne({ _id: classId, facultyId }).select('name code semesterId').populate('semesterId', 'name')
+    ]);
+
+    if (!classroom) {
+        const error = new Error('Class not found for this faculty.');
+        error.status = 404;
+        throw error;
+    }
+
+    const students = await Student.find({ facultyId, classId })
+        .populate('facultyId', 'name')
+        .populate('classId', 'name')
+        .sort({ name: 1, studentId: 1 });
+
+    const [classSubjects, exams] = await Promise.all([
+        Subject.find({ facultyId, classId }).select('name').sort({ name: 1 }),
+        Exam.find({ facultyId, classId })
+            .populate('subjectId', 'name')
+            .sort({ createdAt: 1, title: 1 })
+    ]);
+
+    const examIds = exams.map((exam) => exam._id);
+    const studentIds = students.map((student) => student.studentId);
+
+    if (examIds.length > 0 && studentIds.length > 0) {
+        const [responsePairs, existingResultPairs] = await Promise.all([
+            Response.find({ examId: { $in: examIds }, studentId: { $in: studentIds } })
+                .select('examId studentId')
+                .lean(),
+            Result.find({ examId: { $in: examIds }, studentId: { $in: studentIds } })
+                .select('examId studentId')
+                .lean()
+        ]);
+
+        const pairMap = new Map();
+
+        [...responsePairs, ...existingResultPairs].forEach((entry) => {
+            const examId = entry.examId?.toString();
+            const studentId = entry.studentId;
+            if (!examId || !studentId) return;
+            pairMap.set(`${examId}:${studentId}`, { examId, studentId });
+        });
+
+        await Promise.all(
+            Array.from(pairMap.values()).map(({ examId, studentId }) =>
+                recomputeResult(examId, studentId)
+            )
+        );
+    }
+
+    const results = examIds.length > 0 && studentIds.length > 0
+        ? await Result.find({ examId: { $in: examIds }, studentId: { $in: studentIds } }).sort({ submittedAt: -1 })
+        : [];
+
+    const subjectMap = new Map();
+    const examMap = new Map();
+
+    classSubjects.forEach((subject) => {
+        subjectMap.set(subject._id.toString(), {
+            key: subject._id.toString(),
+            label: subject.name
+        });
+    });
+
+    exams.forEach((exam) => {
+        const subjectKey = exam.subjectId?._id?.toString() || `exam:${exam._id}`;
+        const subjectName = exam.subjectId?.name || exam.title || 'Untitled Subject';
+
+        if (!subjectMap.has(subjectKey)) {
+            subjectMap.set(subjectKey, {
+                key: subjectKey,
+                label: subjectName
+            });
+        }
+
+        examMap.set(exam._id.toString(), {
+            subjectKey,
+            subjectName,
+            examTitle: exam.title
+        });
+    });
+
+    const resultsByStudent = new Map();
+    results.forEach((result) => {
+        const current = resultsByStudent.get(result.studentId) || [];
+        current.push(result);
+        resultsByStudent.set(result.studentId, current);
+    });
+
+    const subjects = Array.from(subjectMap.values()).sort((a, b) => a.label.localeCompare(b.label));
+
+    const rows = students.map((student) => {
+        const latestBySubject = {};
+        const studentResults = resultsByStudent.get(student.studentId) || [];
+
+        studentResults.forEach((result) => {
+            const examMeta = examMap.get(result.examId.toString());
+            if (!examMeta || latestBySubject[examMeta.subjectKey]) return;
+
+            latestBySubject[examMeta.subjectKey] = {
+                subjectKey: examMeta.subjectKey,
+                subjectName: examMeta.subjectName,
+                examTitle: examMeta.examTitle,
+                score: result.score || 0,
+                totalPoints: result.totalPoints || 0,
+                percentage: result.totalPoints > 0
+                    ? Math.round((result.score / result.totalPoints) * 100)
+                    : 0,
+                submittedAt: result.submittedAt
+            };
+        });
+
+        const subjectResults = Object.values(latestBySubject);
+
+            return {
+                id: student._id,
+                name: student.name,
+                studentId: student.studentId,
+                facultyName: student.facultyId?.name || faculty?.name || '-',
+                className: student.classId?.name || classroom.name,
+                subjectCount: subjects.length,
+                completedSubjectCount: subjectResults.length,
+                totalScore: subjectResults.reduce((sum, entry) => sum + (entry.score || 0), 0),
+                totalPoints: subjectResults.reduce((sum, entry) => sum + (entry.totalPoints || 0), 0),
+                subjectScores: latestBySubject
+            };
+    });
+
+    return {
+        faculty: faculty ? { id: faculty._id, name: faculty.name, code: faculty.code } : null,
+        class: {
+            id: classroom._id,
+            name: classroom.name,
+            code: classroom.code,
+            semesterName: classroom.semesterId?.name || ''
+        },
+        subjects,
+        students: rows
+    };
+}
+
 // GET /api/results/:studentId — Get all results for a student
+router.get('/class-matrix/pdf', verifyToken, requireAdmin, async (req, res) => {
+    try {
+        const payload = await buildClassMatrixData(resolveFacultyId(req), req.query.classId);
+        const pdfBuffer = await generateClassMatrixPDF({
+            faculty: payload.faculty,
+            classroom: payload.class,
+            subjects: payload.subjects,
+            students: payload.students
+        });
+
+        const safeClassName = (payload.class?.name || 'class-results').replace(/[^a-z0-9-_]+/gi, '_');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=result_exam_${safeClassName}.pdf`);
+        res.send(pdfBuffer);
+    } catch (error) {
+        console.error('Class matrix pdf error:', error);
+        res.status(error.status || 500).json({ message: error.message || 'Error generating class result PDF.' });
+    }
+});
+
+router.get('/class-matrix', verifyToken, requireAdmin, async (req, res) => {
+    try {
+        const payload = await buildClassMatrixData(resolveFacultyId(req), req.query.classId);
+        res.json(payload);
+    } catch (error) {
+        console.error('Class matrix error:', error);
+        res.status(error.status || 500).json({ message: error.message || 'Error fetching class result matrix.' });
+    }
+});
+
 router.get('/:studentId', verifyToken, async (req, res) => {
     try {
         const studentId = req.params.studentId;

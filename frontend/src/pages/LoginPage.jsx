@@ -4,6 +4,16 @@ import { useAuth } from '../context/AuthContext';
 import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
+import {
+    extractStudentIdChunks,
+    extractSingleStudentIdCharacter,
+    normalizeStudentIdFromSpeech,
+    sanitizeStudentId,
+    isLikelyStudentId,
+    spellStudentId
+} from '../utils/studentIdSpeech';
+
+const LAST_STUDENT_ID_KEY = 'last_student_id';
 
 export default function LoginPage() {
     const [mode, setMode] = useState('student'); // 'student' | 'admin' | 'teacher'
@@ -12,50 +22,344 @@ export default function LoginPage() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [studentStatus, setStudentStatus] = useState('');
+    const [guidedEntryMode, setGuidedEntryMode] = useState(true);
+    const [idConfirmationMode, setIdConfirmationMode] = useState('login');
+    const [lastIdActivityAt, setLastIdActivityAt] = useState(Date.now());
+    const [silenceConfirmedId, setSilenceConfirmedId] = useState('');
 
     // Voice Flow State: 'IDLE' | 'LISTENING_ID' | 'CONFIRM_ID'
     const [voiceStep, setVoiceStep] = useState('IDLE');
+    const voiceStepRef = useRef('IDLE');
+    const studentIdRef = useRef('');
+    const lastProcessedSpeechRef = useRef({ text: '', time: 0 });
+    const studentInputRef = useRef(null);
 
     const { login } = useAuth();
     const navigate = useNavigate();
-    const { speak, stop: stopSpeaking, isSpeaking } = useTTS();
+    const { speak } = useTTS();
 
-    // Student Login Core Logic
-    const performStudentLogin = useCallback(async (id = studentId) => {
-        if (!id) {
-            speak('Please provide your student I D first.', { rate: 1.2 });
+    useEffect(() => {
+        voiceStepRef.current = voiceStep;
+    }, [voiceStep]);
+
+    useEffect(() => {
+        studentIdRef.current = studentId;
+        const status = studentId
+            ? `Current student ID ${spellStudentId(studentId)}.${guidedEntryMode ? ' Guided entry mode is on.' : ''}`
+            : `No student ID entered yet.${guidedEntryMode ? ' Guided entry mode is on.' : ''}`;
+        setStudentStatus(status);
+    }, [guidedEntryMode, studentId]);
+
+    const listeningControlsRef = useRef({
+        startListening: () => { },
+        stopListening: () => { }
+    });
+
+    const focusStudentInput = useCallback(() => {
+        requestAnimationFrame(() => {
+            studentInputRef.current?.focus();
+        });
+    }, []);
+
+    const markStudentIdActivity = useCallback(() => {
+        setLastIdActivityAt(Date.now());
+    }, []);
+
+    const speakAndListen = useCallback((text, options = {}) => {
+        const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
+        pauseListening();
+        speak(text, {
+            ...options,
+            onEnd: () => {
+                if (options.onEnd) options.onEnd();
+                if (mode === 'student') {
+                    resumeListening();
+                }
+            }
+        });
+    }, [mode, speak]);
+
+    const startGuidedEntry = useCallback((resetCurrent = false) => {
+        const existingId = resetCurrent ? '' : sanitizeStudentId(studentIdRef.current);
+        if (resetCurrent) {
+            setStudentId('');
+            setSilenceConfirmedId('');
+        }
+
+        setError('');
+        setIdConfirmationMode('login');
+        setVoiceStep('LISTENING_ID');
+        setGuidedEntryMode(true);
+        markStudentIdActivity();
+
+        const guidedMessage = existingId
+            ? `Guided student I D entry is on. Current I D is ${spellStudentId(existingId)}. Say one character at a time. After each character I will repeat the current I D back to you.`
+            : 'Guided student I D entry is on. Say one letter or one number now. Example, C, or one. After each character I will repeat the current I D back to you.';
+
+        speakAndListen(guidedMessage, { rate: 1.1 });
+        focusStudentInput();
+    }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
+
+    const stopGuidedEntry = useCallback(() => {
+        setGuidedEntryMode(false);
+        setIdConfirmationMode('login');
+        setVoiceStep('LISTENING_ID');
+        markStudentIdActivity();
+        speakAndListen('Guided student I D entry is off. You can still say the whole I D, or say continue when you are ready.', { rate: 1.1 });
+        focusStudentInput();
+    }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
+
+    const readCurrentStudentId = useCallback((prefix = 'Current student I D is') => {
+        const current = sanitizeStudentId(studentIdRef.current);
+        if (!current) {
+            speakAndListen('No student I D entered yet. Say the full I D, or spell it one character at a time.');
+            focusStudentInput();
             return;
         }
+
+        markStudentIdActivity();
+        speakAndListen(`${prefix} ${spellStudentId(current)}. Say continue if it is correct, delete last to fix one character, or clear I D to start over.`, { rate: 1.15 });
+        focusStudentInput();
+    }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
+
+    const clearCurrentStudentId = useCallback((message = 'Student I D cleared. Say your student I D again.') => {
+        setStudentId('');
+        setSilenceConfirmedId('');
+        setError('');
+        setIdConfirmationMode('login');
+        setVoiceStep('LISTENING_ID');
+        markStudentIdActivity();
+        const clearMessage = guidedEntryMode
+            ? `${message} Guided entry is still on. Say the first character now.`
+            : message;
+        speakAndListen(clearMessage, { rate: 1.15 });
+        focusStudentInput();
+    }, [focusStudentInput, guidedEntryMode, markStudentIdActivity, speakAndListen]);
+
+    const deleteLastStudentIdCharacter = useCallback(() => {
+        const current = sanitizeStudentId(studentIdRef.current);
+        if (!current) {
+            speakAndListen('There is no character to remove yet.');
+            focusStudentInput();
+            return;
+        }
+
+        const updated = current.slice(0, -1);
+        setStudentId(updated);
+        setSilenceConfirmedId('');
+        setError('');
+        setIdConfirmationMode('login');
+        setVoiceStep('LISTENING_ID');
+        markStudentIdActivity();
+
+        if (updated) {
+            speakAndListen(`Removed the last character. Current student I D is ${spellStudentId(updated)}.`, { rate: 1.15 });
+        } else {
+            speakAndListen('Removed the last character. The student I D is empty now.', { rate: 1.15 });
+        }
+
+        focusStudentInput();
+    }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
+
+    const promptStudentIdConfirmation = useCallback((candidate = studentIdRef.current) => {
+        const cleanId = normalizeStudentIdFromSpeech(candidate) || sanitizeStudentId(candidate);
+        if (!cleanId) {
+            speakAndListen('Please say the full student I D, or spell it one character at a time.', { rate: 1.15 });
+            focusStudentInput();
+            return;
+        }
+
+        setStudentId(cleanId);
+        setSilenceConfirmedId('');
+        setError('');
+        setIdConfirmationMode('login');
+
+        if (!isLikelyStudentId(cleanId)) {
+            setVoiceStep('LISTENING_ID');
+            markStudentIdActivity();
+            speakAndListen(`I heard ${spellStudentId(cleanId)}. This sounds incomplete. Keep spelling your student I D, then say continue.`, { rate: 1.15 });
+            focusStudentInput();
+            return;
+        }
+
+        setVoiceStep('CONFIRM_ID');
+        speakAndListen(`I heard ${spellStudentId(cleanId)}. Say yes to log in, no to keep editing, delete last to remove one character, or clear I D to start over.`, { rate: 1.15 });
+        focusStudentInput();
+    }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
+
+    const promptSilenceStudentIdConfirmation = useCallback((candidate = studentIdRef.current) => {
+        const cleanId = normalizeStudentIdFromSpeech(candidate) || sanitizeStudentId(candidate);
+        if (!cleanId) return;
+
+        setStudentId(cleanId);
+        setError('');
+        setIdConfirmationMode('save');
+        setVoiceStep('CONFIRM_ID');
+        speakAndListen(`You were quiet for one minute. Current student I D is ${spellStudentId(cleanId)}. Say yes to save this I D, or no to clear it and start again.`, { rate: 1.15 });
+        focusStudentInput();
+    }, [focusStudentInput, speakAndListen]);
+
+    const saveStudentIdOnly = useCallback((candidate = studentIdRef.current) => {
+        const cleanId = normalizeStudentIdFromSpeech(candidate) || sanitizeStudentId(candidate);
+        if (!cleanId) {
+            speakAndListen('There is no valid student I D to save yet.', { rate: 1.15 });
+            focusStudentInput();
+            return;
+        }
+
+        localStorage.setItem(LAST_STUDENT_ID_KEY, cleanId);
+        setStudentId(cleanId);
+        setError('');
+        setSilenceConfirmedId(cleanId);
+        setIdConfirmationMode('login');
+        setVoiceStep('LISTENING_ID');
+        markStudentIdActivity();
+        speakAndListen(`Student I D ${spellStudentId(cleanId)} has been saved. Say continue or login when you are ready.`, { rate: 1.15 });
+        focusStudentInput();
+    }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
+
+    const useLastSavedStudentId = useCallback(() => {
+        const savedId = sanitizeStudentId(localStorage.getItem(LAST_STUDENT_ID_KEY) || '');
+        if (!savedId) {
+            speakAndListen('There is no saved student I D on this device yet.', { rate: 1.15 });
+            focusStudentInput();
+            return;
+        }
+
+        markStudentIdActivity();
+        promptStudentIdConfirmation(savedId);
+    }, [focusStudentInput, markStudentIdActivity, promptStudentIdConfirmation, speakAndListen]);
+
+    const applyStudentIdChunks = useCallback((chunks, options = {}) => {
+        const { replace = false, autoConfirm = false, guided = false } = options;
+        const chunkValue = sanitizeStudentId(chunks.join(''));
+        if (!chunkValue) {
+            speakAndListen('I did not catch a valid letter or number. Please say it again.', { rate: 1.15 });
+            focusStudentInput();
+            return '';
+        }
+
+        const nextId = sanitizeStudentId(`${replace ? '' : studentIdRef.current}${chunkValue}`);
+        setStudentId(nextId);
+        setSilenceConfirmedId('');
+        setError('');
+        setIdConfirmationMode('login');
+        setVoiceStep('LISTENING_ID');
+        markStudentIdActivity();
+
+        if (autoConfirm && isLikelyStudentId(nextId)) {
+            promptStudentIdConfirmation(nextId);
+            return nextId;
+        }
+
+        const followUp = guided
+            ? `I wrote ${spellStudentId(chunkValue)}. Current student I D is ${spellStudentId(nextId)}. Say the next character, say delete last, or say finish guided entry when you are done.`
+            : `Added ${spellStudentId(chunkValue)}. Current student I D is ${spellStudentId(nextId)}. Say continue if correct, or keep spelling.`;
+        speakAndListen(followUp, { rate: 1.15 });
+        focusStudentInput();
+        return nextId;
+    }, [focusStudentInput, markStudentIdActivity, promptStudentIdConfirmation, speakAndListen]);
+
+    const handleStudentVoiceFallback = useCallback((spokenText) => {
+        if (mode !== 'student' || voiceStepRef.current === 'IDLE') return;
+
+        const cleaned = String(spokenText || '').trim();
+        if (!cleaned) return;
+
+        const now = Date.now();
+        if (
+            lastProcessedSpeechRef.current.text === cleaned
+            && now - lastProcessedSpeechRef.current.time < 1200
+        ) {
+            return;
+        }
+        lastProcessedSpeechRef.current = { text: cleaned, time: now };
+
+        const hasIdCue = /\b(?:my\s+student\s+id|student\s+id|my\s+id|i\s*d|id|aqoonsi(?:ga(?:ygu)?)?)\b/i.test(cleaned);
+        const chunks = extractStudentIdChunks(cleaned);
+        if (!chunks.length) return;
+
+        const singleCharacter = extractSingleStudentIdCharacter(cleaned);
+        if (singleCharacter) {
+            applyStudentIdChunks([singleCharacter], {
+                replace: false,
+                autoConfirm: false,
+                guided: true
+            });
+            return;
+        }
+
+        if (guidedEntryMode) {
+            applyStudentIdChunks(chunks, {
+                replace: false,
+                autoConfirm: false,
+                guided: true
+            });
+            return;
+        }
+
+        if (hasIdCue) {
+            promptStudentIdConfirmation(normalizeStudentIdFromSpeech(cleaned) || chunks.join(''));
+            return;
+        }
+
+        const isBatchEntry = chunks.length > 1 || sanitizeStudentId(chunks.join('')).length >= 4;
+        applyStudentIdChunks(chunks, {
+            replace: false,
+            autoConfirm: isBatchEntry && !studentIdRef.current
+        });
+    }, [applyStudentIdChunks, guidedEntryMode, mode, promptStudentIdConfirmation]);
+
+    const performStudentLogin = useCallback(async (id = studentIdRef.current) => {
+        const normalizedId = normalizeStudentIdFromSpeech(id || studentIdRef.current) || sanitizeStudentId(id || studentIdRef.current);
+        if (!normalizedId) {
+            speakAndListen('Please provide your student I D first.', { rate: 1.15 });
+            focusStudentInput();
+            return;
+        }
+
         setError('');
         setLoading(true);
+        setIdConfirmationMode('login');
+        setVoiceStep('IDLE');
+        listeningControlsRef.current.stopListening();
 
         try {
-            const res = await api.post('/student-login', { studentId: id });
+            const res = await api.post('/student-login', { studentId: normalizedId });
+            localStorage.setItem(LAST_STUDENT_ID_KEY, normalizedId);
             login(
-                { ...res.data.student, role: 'student', examId: res.data.exam.id },
+                { ...res.data.student, role: 'student', examId: res.data.exam?.id || null },
                 res.data.token
             );
-            // Navuate immediately - Dashboard will handle the welcome speech
             navigate('/student/dashboard');
         } catch (err) {
             const msg = err.response?.data?.message || 'Login failed. Please check your I D.';
             setError(msg);
-            speak(msg, { rate: 1.2 });
-
-            // Clear textbox and restart listening if login failed
-            setStudentId('');
-            if (mode === 'student') {
-                setVoiceStep('LISTENING_ID');
-                window._shouldRestartListening = true;
-            }
+            setStudentId(normalizedId);
+            setSilenceConfirmedId('');
+            setIdConfirmationMode('login');
+            setVoiceStep('LISTENING_ID');
+            markStudentIdActivity();
+            speakAndListen(`${msg}. Current student I D is ${spellStudentId(normalizedId)}. Say delete last, clear I D, spell more characters, or say continue to try again.`, { rate: 1.15 });
+            focusStudentInput();
         } finally {
             setLoading(false);
         }
-    }, [studentId, login, navigate, speak, mode]);
+    }, [focusStudentInput, login, markStudentIdActivity, navigate, speakAndListen]);
 
     const handleStudentLogin = (e) => {
         e.preventDefault();
-        performStudentLogin();
+        if (voiceStep === 'CONFIRM_ID') {
+            if (idConfirmationMode === 'save') {
+                saveStudentIdOnly(studentId);
+                return;
+            }
+            performStudentLogin(studentId);
+            return;
+        }
+
+        promptStudentIdConfirmation(studentId);
     };
 
     const handleAdminLogin = async (e) => {
@@ -91,146 +395,130 @@ export default function LoginPage() {
         }
     };
 
-    // Voice Commands Map - Dynamic based on voiceStep
     const getCommandMap = () => {
+        const baseCommands = {
+            'set student id': (id) => promptStudentIdConfirmation(id),
+            'repeat id': () => readCurrentStudentId(),
+            'read id': () => readCurrentStudentId(),
+            'current id': () => readCurrentStudentId(),
+            'guided mode': () => startGuidedEntry(false),
+            'start guided entry': () => startGuidedEntry(false),
+            'step by step': () => startGuidedEntry(false),
+            'character mode': () => startGuidedEntry(false),
+            'guided entry': () => startGuidedEntry(false),
+            'finish guided entry': () => promptStudentIdConfirmation(studentIdRef.current),
+            'stop guided entry': () => stopGuidedEntry(),
+            'exit guided entry': () => stopGuidedEntry(),
+            'delete last': () => deleteLastStudentIdCharacter(),
+            'remove last': () => deleteLastStudentIdCharacter(),
+            'backspace': () => deleteLastStudentIdCharacter(),
+            'clear id': () => clearCurrentStudentId(),
+            'clear': () => clearCurrentStudentId(),
+            'start over': () => clearCurrentStudentId(),
+            'continue': () => promptStudentIdConfirmation(studentIdRef.current),
+            'done': () => promptStudentIdConfirmation(studentIdRef.current),
+            'login': () => promptStudentIdConfirmation(studentIdRef.current),
+            'enter exam': () => promptStudentIdConfirmation(studentIdRef.current),
+            'use last id': () => useLastSavedStudentId(),
+            'last id': () => useLastSavedStudentId()
+        };
+
         if (voiceStep === 'CONFIRM_ID') {
             return {
+                ...baseCommands,
                 'yes': () => {
-                    console.log('Voice: Confirmed ID');
-                    setVoiceStep('IDLE'); // Stop listening/flow while logging in
-                    performStudentLogin();
+                    if (idConfirmationMode === 'save') {
+                        saveStudentIdOnly(studentIdRef.current);
+                        return;
+                    }
+                    performStudentLogin(studentIdRef.current);
                 },
                 'no': () => {
-                    console.log('Voice: Rejected ID');
-                    setStudentId('');
-                    // Quick clear prompts
-                    stopListening();
-                    speak('Cleared. Enter I D.', {
-                        rate: 1.3,
-                        onEnd: () => {
-                            setVoiceStep('LISTENING_ID');
-                            startListening();
-                        }
-                    });
-                },
-                'cancel': () => {
-                    setStudentId('');
-                    stopListening();
-                    speak('Cleared.', {
-                        rate: 1.3,
-                        onEnd: () => {
-                            setVoiceStep('LISTENING_ID');
-                            startListening();
-                        }
-                    });
+                    if (idConfirmationMode === 'save') {
+                        clearCurrentStudentId('Okay. I cleared the student I D. Please start the student I D again from the beginning.');
+                        return;
+                    }
+                    setVoiceStep('LISTENING_ID');
+                    setIdConfirmationMode('login');
+                    markStudentIdActivity();
+                    readCurrentStudentId('Okay. Keep editing. Current student I D is');
                 }
             };
         }
 
-        // Default commands when listening for ID
-        return {
-            'set student id': (id) => {
-                handleIdInput(id);
-            }
-        };
+        return baseCommands;
     };
 
-    const { isListening, transcript, lastCommand, startListening, stopListening } = useVoiceCommands(getCommandMap(), mode === 'student');
+    const {
+        isListening,
+        transcript,
+        lastCommand,
+        startListening,
+        stopListening
+    } = useVoiceCommands(
+        getCommandMap(),
+        mode === 'student',
+        mode === 'student' ? handleStudentVoiceFallback : null
+    );
 
-    // Helper to switch between speaking and listening
-    // This enforces the "Silencing" requirement
-    const speakAndListen = useCallback((text, options = {}) => {
-        stopListening(); // Turn off mic immediately
-        speak(text, {
-            ...options,
-            onEnd: () => {
-                if (options.onEnd) options.onEnd();
-                // Turn mic back on ONLY after speech finishes
-                startListening();
-            }
-        });
-    }, [speak, startListening, stopListening]);
-
-    // Helper to process valid ID input
-    const handleIdInput = useCallback((id) => {
-        if (!id || voiceStep !== 'LISTENING_ID') return;
-
-        const cleanId = id.replace(/\s/g, '').toUpperCase();
-        setStudentId(cleanId);
-
-        // Transition to Confirmation
-        setVoiceStep('CONFIRM_ID');
-        // Stop Listen -> Speak -> Start Listen
-        speakAndListen(`Are you sure? I D is ${cleanId.split('').join(' ')}. Yes or No?`, { rate: 1.2 });
-    }, [voiceStep, speakAndListen]);
-
-    // Transcript Processing specifically for capturing ID
     useEffect(() => {
-        if (isListening && transcript && mode === 'student' && voiceStep === 'LISTENING_ID') {
-            const lower = transcript.toLowerCase();
+        listeningControlsRef.current = { startListening, stopListening };
+    }, [startListening, stopListening]);
 
-            // 1. Real-time visual update (Sound to Text)
-            if (lower.includes('yes') || lower.includes('no')) return;
-
-            let potentialId = transcript;
-            if (lower.includes('my id is')) {
-                const parts = lower.split('my id is');
-                potentialId = parts[1] || '';
-            }
-
-            const cleanText = potentialId.replace(/\s/g, '').toUpperCase();
-
-            // Textbox Update: reflect whatever the recognizer returned immediately
-            if (cleanText) {
-                setStudentId(cleanText);
-            }
-            // also sync studentId with raw transcript so user sees the full phrase
-            if (transcript) {
-                const raw = transcript.replace(/\s/g, '').toUpperCase();
-                setStudentId(raw);
-            }
-
-            // 2. Debounce for Finalization (shorter delay for snappier conversion)
-            clearTimeout(window._transcriptTimer);
-
-            // 200ms delay gives faster text‑to‑input experience while still letting the user finish speaking
-            window._transcriptTimer = setTimeout(() => {
-                if (cleanText.length >= 1) {
-                    handleIdInput(cleanText);
-                }
-            }, 200);
-        }
-    }, [transcript, isListening, mode, voiceStep, handleIdInput]);
-
-    // Initial Welcome Flow
     useEffect(() => {
         if (mode === 'student') {
-            // Reset state
+            const savedId = sanitizeStudentId(localStorage.getItem(LAST_STUDENT_ID_KEY) || '');
             setStudentId('');
+            setSilenceConfirmedId('');
             setError('');
+            setIdConfirmationMode('login');
             setVoiceStep('LISTENING_ID');
+            setGuidedEntryMode(true);
+            setLastIdActivityAt(Date.now());
+            lastProcessedSpeechRef.current = { text: '', time: 0 };
 
-            // Strict Sequence:
-            // 1. System Speak "Welcome..." (Mic OFF)
-            // 2. System Silent
-            // 3. System Listen (Mic ON)
-            speakAndListen('Welcome. Enter Student I D.', { rate: 1.2 });
+            const welcomeMessage = savedId
+                ? 'Welcome. Student I D guided entry is on. Say one character now, for example C, then I will write it and read it back to you. You may also say the full I D at once. Say use last I D to reuse your saved I D. You can also say repeat I D, delete last, clear I D, or continue.'
+                : 'Welcome. Student I D guided entry is on. Say one character now, for example C, then I will write it and read it back to you. You may also say the full I D at once. You can also say repeat I D, delete last, clear I D, or continue.';
+
+            speakAndListen(welcomeMessage, { rate: 1.15 });
+            focusStudentInput();
         } else {
+            setGuidedEntryMode(false);
             stopListening();
             setVoiceStep('IDLE');
         }
-    }, [mode, speakAndListen, stopListening]);
+    }, [focusStudentInput, mode, speakAndListen, stopListening]);
 
-    // Restart listening if needed (e.g. after error)
     useEffect(() => {
-        if (window._shouldRestartListening && !isListening) {
-            window._shouldRestartListening = false;
-            startListening();
-        }
-    }, [isListening, startListening]);
+        if (mode !== 'student' || loading || voiceStep !== 'LISTENING_ID') return undefined;
+
+        const currentId = sanitizeStudentId(studentId);
+        if (!currentId) return undefined;
+        if (currentId === silenceConfirmedId) return undefined;
+
+        const elapsed = Date.now() - lastIdActivityAt;
+        const remaining = Math.max(0, 60000 - elapsed);
+
+        const timeoutId = window.setTimeout(() => {
+            const latestId = sanitizeStudentId(studentIdRef.current);
+            if (latestId && voiceStepRef.current === 'LISTENING_ID') {
+                promptSilenceStudentIdConfirmation(latestId);
+            }
+        }, remaining);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+        };
+    }, [lastIdActivityAt, loading, mode, promptSilenceStudentIdConfirmation, silenceConfirmedId, studentId, voiceStep]);
 
     return (
         <div className="page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {mode === 'student' && (
+                <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                    {studentStatus}
+                </div>
+            )}
             {/* Voice Indicator */}
             {mode === 'student' && (
                 <>
@@ -247,6 +535,7 @@ export default function LoginPage() {
                         <div className="voice-dot"></div>
                         <span>
                             {voiceStep === 'CONFIRM_ID' ? 'Say Yes or No' :
+                                guidedEntryMode ? 'Guided ID Entry' :
                                 isListening ? (lastCommand || 'Listening for ID...') : 'Voice Off'}
                         </span>
                     </div>
@@ -307,32 +596,90 @@ export default function LoginPage() {
 
                     {mode === 'student' ? (
                         <form onSubmit={handleStudentLogin}>
+                            <div
+                                className="badge badge-info"
+                                style={{ marginBottom: 16, width: '100%', justifyContent: 'center', padding: 14, textAlign: 'center', lineHeight: 1.5 }}
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <i className="fa-solid fa-ear-listen" aria-hidden="true"></i>
+                                {studentId
+                                    ? `Current ID: ${spellStudentId(studentId)}${guidedEntryMode ? ' | Guided mode is ON' : ''}`
+                                    : `Say the full ID or spell it one character at a time.${guidedEntryMode ? ' Guided mode is ON.' : ''} Commands: Repeat ID, Delete Last, Clear ID, Continue.`}
+                            </div>
+
                             <div className="input-group">
                                 <label htmlFor="studentId">Student ID</label>
                                 <input
                                     id="studentId"
+                                    ref={studentInputRef}
                                     className="input"
                                     type="text"
-                                    placeholder="Enter your Student ID (e.g., STU001)"
+                                    placeholder="Say or type your student ID"
                                     value={studentId}
-                                    onChange={(e) => setStudentId(e.target.value)}
+                                    onChange={(e) => {
+                                        setStudentId(sanitizeStudentId(e.target.value));
+                                        setSilenceConfirmedId('');
+                                        setError('');
+                                        setIdConfirmationMode('login');
+                                        markStudentIdActivity();
+                                        if (voiceStep === 'CONFIRM_ID') {
+                                            setVoiceStep('LISTENING_ID');
+                                        }
+                                    }}
                                     required
                                     autoFocus
                                     aria-required="true"
-                                    // Visual cue for state
+                                    aria-describedby="student-id-help"
                                     style={{
-                                        borderColor: voiceStep === 'CONFIRM_ID' ? 'var(--primary)' : undefined,
+                                        borderColor: voiceStep === 'CONFIRM_ID' ? 'var(--accent-primary)' : undefined,
                                         boxShadow: voiceStep === 'CONFIRM_ID' ? '0 0 0 4px rgba(37, 99, 235, 0.1)' : undefined
                                     }}
                                 />
+                                <p id="student-id-help" className="text-muted" style={{ marginTop: 10 }}>
+                                    Blind-friendly input: guided entry starts automatically. Say one letter or one number at a time, for example C, 1, 2, 2, 0, 1, 9, 9, and each character will be written then read back to you.
+                                </p>
+                            </div>
+
+                            <div className="flex gap-sm" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => {
+                                        if (guidedEntryMode) {
+                                            stopGuidedEntry();
+                                        } else {
+                                            startGuidedEntry(false);
+                                        }
+                                    }}
+                                >
+                                    <i className={`fa-solid ${guidedEntryMode ? 'fa-toggle-on' : 'fa-toggle-off'}`} aria-hidden="true"></i>
+                                    {guidedEntryMode ? 'Exit Guided' : 'Guided Entry'}
+                                </button>
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={() => readCurrentStudentId()}>
+                                    <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Read ID
+                                </button>
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={deleteLastStudentIdCharacter} disabled={!studentId}>
+                                    <i className="fa-solid fa-delete-left" aria-hidden="true"></i> Delete Last
+                                </button>
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={() => clearCurrentStudentId()} disabled={!studentId}>
+                                    <i className="fa-solid fa-eraser" aria-hidden="true"></i> Clear ID
+                                </button>
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={useLastSavedStudentId}>
+                                    <i className="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Use Last ID
+                                </button>
                             </div>
 
                             <button className="btn btn-primary btn-lg" style={{ width: '100%' }} type="submit" disabled={loading}>
                                 {loading
                                     ? (<><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>)
                                     : (voiceStep === 'CONFIRM_ID'
-                                        ? (<><i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> Say "Yes" to Confirm</>)
-                                        : (<><i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> Enter Exam</>)
+                                        ? (
+                                            idConfirmationMode === 'save'
+                                                ? (<><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Save Confirmed ID</>)
+                                                : (<><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Confirm And Login</>)
+                                        )
+                                        : (<><i className="fa-solid fa-id-card" aria-hidden="true"></i> Continue With ID</>)
                                     )
                                 }
                             </button>
@@ -409,8 +756,12 @@ export default function LoginPage() {
 
                     <div className="text-center mt-lg text-muted" style={{ fontSize: 'var(--font-size-sm)' }}>
                         {mode === 'student'
-                            ? (<><i className="fa-solid fa-lightbulb" aria-hidden="true"></i> Speak your ID, then say Yes to confirm.</>)
-                            : (<><i className="fa-solid fa-lightbulb" aria-hidden="true"></i> Contact system admin if you forgot your credentials</>)
+                            ? (
+                                <>
+                                    <i className="fa-solid fa-lightbulb" aria-hidden="true"></i> Tip: say "Guided Mode" for the easiest step-by-step entry, or say "Repeat ID", "Delete Last", "Clear ID", "Use Last ID", or "Continue".
+                                </>
+                            )
+                            : (<><i className="fa-solid fa-lightbulb" aria-hidden="true"></i></>)
                         }
                     </div>
                 </div>

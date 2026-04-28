@@ -7,47 +7,268 @@ import { useTTS } from '../hooks/useTTS';
 import VoiceFeedback from '../components/VoiceFeedback';
 import api from '../api/axios';
 
+const TIME_WARNING_THRESHOLDS = [900, 600, 300, 60, 30];
+const DICTATION_CONFIRM_DELAY = 4000;
+
+function formatTime(totalSeconds) {
+    const safeSeconds = Math.max(totalSeconds, 0);
+    const minutes = Math.floor(safeSeconds / 60);
+    const seconds = safeSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getQuestionTypeLabel(type) {
+    if (type === 'mcq') return 'Multiple Choice';
+    if (type === 'true-false') return 'True or False';
+    if (type === 'open-ended') return 'Open-Ended';
+    return 'Question';
+}
+
+function getSelectedOption(question, answer) {
+    if (!question?.options?.length || !answer) return null;
+    return question.options.find((option) => option.label === answer) || null;
+}
+
+function getCurrentAnswerSummary(question, answer) {
+    if (!question || !answer) return '';
+
+    if (question.type === 'open-ended') {
+        return answer.length > 180 ? `${answer.slice(0, 180)}...` : answer;
+    }
+
+    const selectedOption = getSelectedOption(question, answer);
+    if (!selectedOption) {
+        return `Option ${answer}`;
+    }
+
+    return `Option ${selectedOption.label}: ${selectedOption.text}`;
+}
+
+function buildQuestionSpeech(question, index, total, sectionName, currentAnswer) {
+    if (!question) return '';
+
+    const parts = [
+        sectionName ? `Section ${sectionName}.` : '',
+        `Question ${index + 1} of ${total}.`,
+        `${getQuestionTypeLabel(question.type)} question.`,
+        `${question.points} point${question.points === 1 ? '' : 's'}.`,
+        question.questionText
+    ];
+
+    if (question.options?.length) {
+        parts.push('Answer choices.');
+        question.options.forEach((option) => {
+            parts.push(`Option ${option.label}, ${option.text}.`);
+        });
+    }
+
+    if (currentAnswer) {
+        if (question.type === 'open-ended') {
+            parts.push('You already have a saved draft answer for this question.');
+        } else {
+            parts.push(`Your current answer is ${getCurrentAnswerSummary(question, currentAnswer)}.`);
+        }
+    }
+
+    if (question.type === 'open-ended') {
+        parts.push('You may type or dictate your answer. Say save answer when you are ready.');
+    } else {
+        parts.push('Say A, B, C, or D, then say yes to confirm.');
+    }
+
+    return parts.filter(Boolean).join(' ');
+}
+
+function buildTimeWarning(seconds) {
+    if (seconds >= 60) {
+        const minutes = Math.floor(seconds / 60);
+        return `${minutes} minute${minutes === 1 ? '' : 's'} remaining.`;
+    }
+
+    return `${seconds} seconds remaining.`;
+}
+
 export default function ExamPage() {
     const { user } = useAuth();
     const {
-        exam, sections, questions, currentIndex, currentQuestion,
-        answers, answeredCount, unansweredQuestions,
-        nextQuestion, prevQuestion, goToQuestion, goToFirstUnanswered,
-        setAnswer, saveAnswer, getCurrentSectionName, getTimeTaken, finishExam
+        exam,
+        sections,
+        questions,
+        currentIndex,
+        currentQuestion,
+        answers,
+        answeredCount,
+        unansweredQuestions,
+        nextQuestion,
+        prevQuestion,
+        goToQuestion,
+        goToFirstUnanswered,
+        setAnswer,
+        saveAnswer,
+        getCurrentSectionName,
+        getTimeTaken,
+        finishExam
     } = useExam();
-    const { speak, speakQuestion, stop: stopTTS, isSpeaking, rate, setRate } = useTTS();
+    const { speak, stop: stopTTS, isSpeaking, rate, setRate } = useTTS();
     const navigate = useNavigate();
 
     const [feedbackMsg, setFeedbackMsg] = useState('');
+    const [screenReaderStatus, setScreenReaderStatus] = useState('');
+    const [screenReaderAlert, setScreenReaderAlert] = useState('');
     const [showConfirm, setShowConfirm] = useState(false);
     const [pendingAnswer, setPendingAnswer] = useState(null);
     const [showFinishModal, setShowFinishModal] = useState(false);
     const [openEndedText, setOpenEndedText] = useState('');
-    const [pendingDictation, setPendingDictation] = useState('');
-    const pendingDictationRef = useRef('');
+    const [, setPendingDictation] = useState('');
     const [waitingAnswerConfirm, setWaitingAnswerConfirm] = useState(false);
     const [waitingNextConfirm, setWaitingNextConfirm] = useState(false);
-    const [waitingFinishConfirm, setWaitingFinishConfirm] = useState(false);
-    const [waitingUnansweredDecision, setWaitingUnansweredDecision] = useState(false);
-    // waiting for yes/no continue prompt
-    const [waitingForContinue, setWaitingForContinue] = useState(false);
     const [timeRemaining, setTimeRemaining] = useState(0);
+
+    const pendingDictationRef = useRef('');
     const autoSaveRef = useRef(null);
-    const dictationSaveTimer = useRef(null);
     const dictationTimeoutRef = useRef(null);
     const listeningPromptRef = useRef(null);
+    const feedbackTimerRef = useRef(null);
+    const statusTimerRef = useRef(null);
+    const alertTimerRef = useRef(null);
+    const previousTimeRemainingRef = useRef(null);
+    const hasAnnouncedIntroRef = useRef(false);
+    const questionHeadingRef = useRef(null);
+    const openEndedInputRef = useRef(null);
+    const confirmYesButtonRef = useRef(null);
+    const finishContinueButtonRef = useRef(null);
 
-    const showFeedback = (msg) => {
-        setFeedbackMsg(msg);
-        setTimeout(() => setFeedbackMsg(''), 3500);
-    };
+    const voiceSupported = typeof window !== 'undefined'
+        && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
+    const isTimedExam = Number(exam?.timeLimit) > 0;
+    const currentSectionName = getCurrentSectionName();
+    const currentAnswer = currentQuestion ? answers[currentQuestion.id] : '';
+    const savedOpenEndedAnswer = currentQuestion?.type === 'open-ended' && typeof currentAnswer === 'string'
+        ? currentAnswer
+        : '';
+    const openEndedDraft = currentQuestion?.type === 'open-ended' ? openEndedText.trim() : '';
+    const hasUnsavedOpenEndedDraft = currentQuestion?.type === 'open-ended'
+        && Boolean(openEndedDraft)
+        && openEndedDraft !== savedOpenEndedAnswer.trim();
+    const progressPercent = questions.length ? Math.round((answeredCount / questions.length) * 100) : 0;
+    const timerClass = !isTimedExam ? '' : timeRemaining <= 60 ? 'danger' : timeRemaining <= 300 ? 'warning' : '';
+    const questionGuidance = currentQuestion?.type === 'open-ended'
+        ? 'Type or speak your answer. When you pause, the system reads it back and asks Yes or No. Say Yes to save, or No to continue speaking. You can also say "Save answer" or press Control and Enter.'
+        : 'Choose one answer. Say A, B, C, or D, then confirm with Yes. After saving, you will be asked if you want the next question.';
 
-    // ----- New: Help integration -----
+    const clearAnnouncementTimer = useCallback((timerRef) => {
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+    }, []);
+
+    const pushFeedback = useCallback((message) => {
+        clearAnnouncementTimer(feedbackTimerRef);
+        setFeedbackMsg(message);
+        feedbackTimerRef.current = setTimeout(() => {
+            setFeedbackMsg('');
+            feedbackTimerRef.current = null;
+        }, 3500);
+    }, [clearAnnouncementTimer]);
+
+    const updateLiveRegion = useCallback((setter, timerRef, message) => {
+        clearAnnouncementTimer(timerRef);
+        setter('');
+        timerRef.current = setTimeout(() => {
+            setter(message);
+            timerRef.current = null;
+        }, 30);
+    }, [clearAnnouncementTimer]);
+
+    const announce = useCallback((message, options = {}) => {
+        const {
+            toast = true,
+            assertive = false,
+            speakMessage = false,
+            speechOptions = undefined
+        } = options;
+
+        if (!message) return;
+
+        if (toast) {
+            pushFeedback(message);
+        }
+
+        if (assertive) {
+            updateLiveRegion(setScreenReaderAlert, alertTimerRef, message);
+        } else {
+            updateLiveRegion(setScreenReaderStatus, statusTimerRef, message);
+        }
+
+        if (speakMessage) {
+            speak(message, speechOptions);
+        }
+    }, [pushFeedback, speak, updateLiveRegion]);
+
+    const clearDictationTimer = useCallback(() => {
+        if (dictationTimeoutRef.current) {
+            clearTimeout(dictationTimeoutRef.current);
+            dictationTimeoutRef.current = null;
+        }
+    }, []);
+
+    const clearListeningPrompt = useCallback(() => {
+        if (listeningPromptRef.current) {
+            clearTimeout(listeningPromptRef.current);
+            listeningPromptRef.current = null;
+        }
+    }, []);
+
+    const resetPromptState = useCallback(() => {
+        setShowConfirm(false);
+        setPendingAnswer(null);
+        setWaitingAnswerConfirm(false);
+        setWaitingNextConfirm(false);
+    }, []);
+
+    const persistCurrentDraft = useCallback(async () => {
+        return;
+    }, []);
+
+    const requestOpenEndedSaveConfirmation = useCallback((reason = 'pause') => {
+        if (!currentQuestion || currentQuestion.type !== 'open-ended') return false;
+
+        const draft = (openEndedText || pendingDictationRef.current || '').trim();
+        if (!draft) return false;
+
+        clearDictationTimer();
+        setWaitingAnswerConfirm(true);
+        pendingDictationRef.current = draft;
+
+        const preview = draft.length > 180 ? `${draft.slice(0, 180)}...` : draft;
+        const message = reason === 'pause'
+            ? `I heard: ${preview}. Say yes to save it, or no to continue speaking.`
+            : `You have an unsaved answer. I heard: ${preview}. Say yes to save it, or no to continue editing.`;
+
+        announce(message, {
+            speakMessage: true,
+            assertive: true
+        });
+
+        openEndedInputRef.current?.focus();
+        return true;
+    }, [announce, clearDictationTimer, currentQuestion, openEndedText]);
+
+    const readAccessibilityHelp = useCallback(() => {
+        const helpText = voiceSupported
+            ? 'Accessibility help. Say next, previous, repeat question, finish, review unanswered, or save answer. On the keyboard use Alt plus N for next, Alt plus P for previous, Alt plus R to repeat, Alt plus F to finish, and Alt plus A to D to choose an option. In the long answer box press Control and Enter to save.'
+            : 'Accessibility help. Voice commands are not available in this browser, so use the keyboard. Press Alt plus N for next, Alt plus P for previous, Alt plus R to repeat the question, Alt plus F to open finish options, and Alt plus A to D to choose an option. In the long answer box press Control and Enter to save.';
+
+        announce(helpText, { speakMessage: true, assertive: true });
+    }, [announce, voiceSupported]);
+
     const requestHelp = useCallback(async (studentText) => {
         if (!currentQuestion) {
-            speak('No question is active.');
+            announce('No question is active right now.', { speakMessage: true, assertive: true });
             return;
         }
+
         try {
             const res = await fetch('/ml/help', {
                 method: 'POST',
@@ -57,62 +278,420 @@ export default function ExamPage() {
                     questionText: currentQuestion.questionText
                 })
             });
-            if (!res.ok) throw new Error(`Status ${res.status}`);
+
+            if (!res.ok) {
+                throw new Error(`Status ${res.status}`);
+            }
+
             const data = await res.json();
             const text = data.response || 'Sorry, I could not generate a help message.';
-            speak(text);
-            setFeedbackMsg(text);
-        } catch (e) {
-            console.error('Help request failed', e);
-            speak('Sorry, I could not get help right now.');
+            announce(text, { speakMessage: true, assertive: true });
+        } catch (error) {
+            console.error('Help request failed', error);
+            announce('Sorry, I could not get help right now.', { speakMessage: true, assertive: true });
         }
-    }, [currentQuestion, speak]);
+    }, [announce, currentQuestion]);
 
-        // Timer
-    useEffect(() => {
-        if (!exam) return;
-        const totalSecs = exam.timeLimit * 60;
-        const interval = setInterval(() => {
-            const elapsed = getTimeTaken();
-            const remaining = totalSecs - elapsed;
-            setTimeRemaining(remaining);
-            if (remaining <= 0) {
-                clearInterval(interval);
+    const moveToNextQuestion = useCallback(async () => {
+        if (hasUnsavedOpenEndedDraft && !waitingAnswerConfirm) {
+            requestOpenEndedSaveConfirmation('navigation');
+            return;
+        }
+        await persistCurrentDraft();
+        resetPromptState();
+        nextQuestion();
+    }, [hasUnsavedOpenEndedDraft, nextQuestion, persistCurrentDraft, requestOpenEndedSaveConfirmation, resetPromptState, waitingAnswerConfirm]);
+
+    const moveToPreviousQuestion = useCallback(async () => {
+        if (hasUnsavedOpenEndedDraft && !waitingAnswerConfirm) {
+            requestOpenEndedSaveConfirmation('navigation');
+            return;
+        }
+        await persistCurrentDraft();
+        resetPromptState();
+        prevQuestion();
+    }, [hasUnsavedOpenEndedDraft, persistCurrentDraft, prevQuestion, requestOpenEndedSaveConfirmation, resetPromptState, waitingAnswerConfirm]);
+
+    const moveToQuestion = useCallback(async (index) => {
+        if (hasUnsavedOpenEndedDraft && !waitingAnswerConfirm) {
+            requestOpenEndedSaveConfirmation('navigation');
+            return;
+        }
+        await persistCurrentDraft();
+        resetPromptState();
+        goToQuestion(index);
+    }, [goToQuestion, hasUnsavedOpenEndedDraft, persistCurrentDraft, requestOpenEndedSaveConfirmation, resetPromptState, waitingAnswerConfirm]);
+
+    const openFinishDialog = useCallback(() => {
+        if (hasUnsavedOpenEndedDraft && !waitingAnswerConfirm) {
+            requestOpenEndedSaveConfirmation('navigation');
+            return;
+        }
+        resetPromptState();
+        setShowFinishModal(true);
+
+        const finishMessage = unansweredQuestions.length > 0
+            ? `Finish dialog opened. You still have ${unansweredQuestions.length} unanswered question${unansweredQuestions.length === 1 ? '' : 's'}. Say review unanswered to jump there, say yes or submit exam to submit now, or say no to continue.`
+            : 'Finish dialog opened. Say yes or submit exam to submit now, or say no to continue the exam.';
+
+        announce(finishMessage, { speakMessage: true, assertive: true });
+    }, [announce, hasUnsavedOpenEndedDraft, requestOpenEndedSaveConfirmation, resetPromptState, unansweredQuestions.length, waitingAnswerConfirm]);
+
+    const closeFinishDialog = useCallback(() => {
+        setShowFinishModal(false);
+        announce('Finish dialog closed. Continuing the exam.', { speakMessage: true, assertive: true });
+    }, [announce]);
+
+    const jumpToFirstUnanswered = useCallback(async () => {
+        if (hasUnsavedOpenEndedDraft && !waitingAnswerConfirm) {
+            requestOpenEndedSaveConfirmation('navigation');
+            return;
+        }
+        await persistCurrentDraft();
+        resetPromptState();
+        setShowFinishModal(false);
+
+        if (!unansweredQuestions.length) {
+            announce('All questions already have answers.', { speakMessage: true, assertive: true });
+            return;
+        }
+
+        goToFirstUnanswered();
+        announce('Moving to the first unanswered question.', { speakMessage: true, assertive: true });
+    }, [announce, goToFirstUnanswered, hasUnsavedOpenEndedDraft, persistCurrentDraft, requestOpenEndedSaveConfirmation, resetPromptState, unansweredQuestions.length, waitingAnswerConfirm]);
+
+    const handleFinish = useCallback(async () => {
+        if (hasUnsavedOpenEndedDraft && !waitingAnswerConfirm) {
+            requestOpenEndedSaveConfirmation('navigation');
+            return;
+        }
+        try {
+            await persistCurrentDraft();
+            const result = await finishExam();
+            const completionMessage = result
+                ? `Exam submitted. Opening results. Score ${result.score} out of ${result.totalPoints}. ${result.percentage} percent.`
+                : 'Exam submitted. Opening results.';
+
+            announce(completionMessage, { speakMessage: true, assertive: true });
+            navigate('/student/result');
+        } catch (error) {
+            console.error('Finish exam error:', error);
+            announce('There was a problem submitting the exam. Please try again.', { speakMessage: true, assertive: true });
+        }
+    }, [announce, finishExam, hasUnsavedOpenEndedDraft, navigate, persistCurrentDraft, requestOpenEndedSaveConfirmation, waitingAnswerConfirm]);
+
+    const selectOption = useCallback((letter) => {
+        if (!currentQuestion || currentQuestion.type === 'open-ended') return;
+
+        const option = getSelectedOption(currentQuestion, letter);
+        const optionDescription = option ? ` ${option.text}.` : '';
+
+        stopTTS();
+        setPendingAnswer(letter);
+        setShowConfirm(true);
+        setWaitingNextConfirm(false);
+
+        announce(`Option ${letter} selected.${optionDescription} Say yes or no.`, {
+            speakMessage: true,
+            assertive: true
+        });
+    }, [announce, currentQuestion, stopTTS]);
+
+    const confirmAnswer = useCallback(async () => {
+        if (!pendingAnswer || !currentQuestion) return;
+
+        setAnswer(currentQuestion.id, pendingAnswer);
+        await saveAnswer(currentQuestion.id, pendingAnswer);
+        setShowConfirm(false);
+        setPendingAnswer(null);
+        setWaitingNextConfirm(true);
+
+        stopTTS();
+        announce(`Answer saved as ${getCurrentAnswerSummary(currentQuestion, pendingAnswer)}. Do you want to go to the next question? Say yes or no.`, {
+            speakMessage: true,
+            assertive: true
+        });
+    }, [announce, currentQuestion, pendingAnswer, saveAnswer, setAnswer, stopTTS]);
+
+    const cancelAnswer = useCallback(() => {
+        setPendingAnswer(null);
+        setShowConfirm(false);
+        announce('Answer selection cancelled. Choose another option.', { speakMessage: true, assertive: true });
+    }, [announce]);
+
+    const handleOpenEndedChange = useCallback((event) => {
+        if (!currentQuestion) return;
+
+        const value = event.target.value;
+        setOpenEndedText(value);
+        setPendingDictation(value);
+        pendingDictationRef.current = value;
+    }, [currentQuestion]);
+
+    const clearOpenEndedAnswer = useCallback(async () => {
+        if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
+
+        const hadSavedAnswer = Boolean((answers[currentQuestion.id] || '').trim());
+        setOpenEndedText('');
+        setPendingDictation('');
+        pendingDictationRef.current = '';
+        setWaitingAnswerConfirm(false);
+
+        if (hadSavedAnswer) {
+            setAnswer(currentQuestion.id, '');
+            await saveAnswer(currentQuestion.id, '');
+        }
+
+        announce('Answer cleared. You can dictate or type a new answer.', { speakMessage: true, assertive: true });
+        openEndedInputRef.current?.focus();
+    }, [announce, answers, currentQuestion, saveAnswer, setAnswer]);
+
+    const handleOpenEndedSubmit = useCallback(async () => {
+        if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
+
+        const draft = (openEndedText || pendingDictationRef.current || '').trim();
+        if (!draft) {
+            announce('There is no answer to save yet.', { speakMessage: true, assertive: true });
+            return;
+        }
+
+        clearDictationTimer();
+        setWaitingAnswerConfirm(false);
+        setOpenEndedText(draft);
+        setPendingDictation(draft);
+        pendingDictationRef.current = draft;
+        setAnswer(currentQuestion.id, draft);
+        await saveAnswer(currentQuestion.id, draft);
+
+        announce('Open-ended answer saved. Say next when you are ready for the following question.', {
+            speakMessage: true,
+            assertive: true
+        });
+    }, [announce, clearDictationTimer, currentQuestion, openEndedText, saveAnswer, setAnswer]);
+
+    const readCurrentQuestion = useCallback((preface = '') => {
+        if (!currentQuestion) return;
+
+        const message = buildQuestionSpeech(
+            currentQuestion,
+            currentIndex,
+            questions.length,
+            currentSectionName,
+            currentAnswer
+        );
+
+        speak(preface ? `${preface} ${message}` : message, { rate: 1.0 });
+        updateLiveRegion(
+            setScreenReaderStatus,
+            statusTimerRef,
+            `Question ${currentIndex + 1} of ${questions.length}. ${currentSectionName ? `${currentSectionName}. ` : ''}${getQuestionTypeLabel(currentQuestion.type)}.`
+        );
+    }, [
+        currentAnswer,
+        currentIndex,
+        currentQuestion,
+        currentSectionName,
+        questions.length,
+        speak,
+        updateLiveRegion
+    ]);
+
+    const handleVoiceDictation = useCallback((text) => {
+        const cleaned = text.trim();
+        if (!cleaned) return;
+
+        if (/\b(understand|help|nervous|anxious|what does|explain)\b/i.test(cleaned)) {
+            requestHelp(cleaned);
+            return;
+        }
+
+        if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
+
+        const baseText = pendingDictationRef.current || openEndedText;
+        const updated = baseText ? `${baseText} ${cleaned}` : cleaned;
+
+        setOpenEndedText(updated);
+        setPendingDictation(updated);
+        pendingDictationRef.current = updated;
+        setWaitingAnswerConfirm(false);
+
+        clearDictationTimer();
+        dictationTimeoutRef.current = setTimeout(() => {
+            dictationTimeoutRef.current = null;
+            requestOpenEndedSaveConfirmation('pause');
+        }, DICTATION_CONFIRM_DELAY);
+    }, [clearDictationTimer, currentQuestion, openEndedText, requestHelp, requestOpenEndedSaveConfirmation]);
+
+    const commandMap = {
+        __shouldMatchOption__: () => currentQuestion?.type !== 'open-ended',
+        next: () => {
+            setWaitingNextConfirm(false);
+            moveToNextQuestion();
+        },
+        xiga: () => {
+            setWaitingNextConfirm(false);
+            moveToNextQuestion();
+        },
+        previous: () => moveToPreviousQuestion(),
+        back: () => moveToPreviousQuestion(),
+        hore: () => moveToPreviousQuestion(),
+        again: () => readCurrentQuestion(),
+        'repeat question': () => readCurrentQuestion(),
+        'ku celi': () => readCurrentQuestion(),
+        'soo celi': () => readCurrentQuestion(),
+        help: () => readAccessibilityHelp(),
+        'help me': () => readAccessibilityHelp(),
+        caawi: () => readAccessibilityHelp(),
+        'question help': () => requestHelp('Please explain this question in simpler words.'),
+        'review unanswered': () => jumpToFirstUnanswered(),
+        'submit exam': () => handleFinish(),
+        'stop reading': () => {
+            stopTTS();
+            announce('Speech stopped.', { toast: true, assertive: true });
+        },
+        finish: () => openFinishDialog(),
+        dhammee: () => openFinishDialog(),
+        option: (letter) => selectOption(letter),
+        'save answer': () => handleOpenEndedSubmit(),
+        xaree: () => handleOpenEndedSubmit(),
+        keydi: () => handleOpenEndedSubmit(),
+        'clear answer': () => clearOpenEndedAnswer(),
+        'tir tir': () => clearOpenEndedAnswer(),
+        'tir-tir': () => clearOpenEndedAnswer(),
+        yes: () => {
+            if (showConfirm && pendingAnswer) {
+                confirmAnswer();
+                return;
+            }
+
+            if (waitingAnswerConfirm && currentQuestion?.type === 'open-ended') {
+                handleOpenEndedSubmit();
+                return;
+            }
+
+            if (waitingNextConfirm) {
+                setWaitingNextConfirm(false);
+                moveToNextQuestion();
+                return;
+            }
+
+            if (showFinishModal) {
                 handleFinish();
             }
-        }, 1000);
-        return () => clearInterval(interval);
-    }, [exam]);
+        },
+        no: () => {
+            if (showConfirm && pendingAnswer) {
+                cancelAnswer();
+                return;
+            }
 
-    // Auto-save every 15 seconds
+            if (waitingAnswerConfirm) {
+                setWaitingAnswerConfirm(false);
+                announce('Okay. Keep editing your answer, or say clear answer to start over.', {
+                    speakMessage: true,
+                    assertive: true
+                });
+                openEndedInputRef.current?.focus();
+                return;
+            }
+
+            if (waitingNextConfirm) {
+                setWaitingNextConfirm(false);
+                announce('Staying on the current question.', { speakMessage: true, assertive: true });
+                return;
+            }
+
+            if (showFinishModal) {
+                closeFinishDialog();
+            }
+        }
+    };
+
+    const {
+        isListening,
+        transcript,
+        lastCommand,
+        startListening,
+        stopListening,
+        toggleListening
+    } = useVoiceCommands(commandMap, true, handleVoiceDictation);
+
+    useEffect(() => {
+        if (!exam) return;
+
+        if (!isTimedExam) {
+            setTimeRemaining(0);
+            previousTimeRemainingRef.current = null;
+            return undefined;
+        }
+
+        const totalSeconds = Number(exam.timeLimit) * 60;
+        previousTimeRemainingRef.current = totalSeconds;
+        setTimeRemaining(totalSeconds);
+
+        const interval = setInterval(() => {
+            const remaining = Math.max(totalSeconds - getTimeTaken(), 0);
+            const previousRemaining = previousTimeRemainingRef.current;
+
+            setTimeRemaining(remaining);
+
+            TIME_WARNING_THRESHOLDS.forEach((threshold) => {
+                if (previousRemaining > threshold && remaining <= threshold) {
+                    const message = buildTimeWarning(threshold);
+                    announce(message, {
+                        speakMessage: threshold <= 300,
+                        assertive: threshold <= 60
+                    });
+                }
+            });
+
+            if (remaining <= 0) {
+                clearInterval(interval);
+                announce('Time is up. Submitting the exam now.', { speakMessage: true, assertive: true });
+                handleFinish();
+            }
+
+            previousTimeRemainingRef.current = remaining;
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [announce, exam, getTimeTaken, handleFinish, isTimedExam]);
+
     useEffect(() => {
         autoSaveRef.current = setInterval(() => {
-            if (currentQuestion && answers[currentQuestion.id]) {
+            if (!currentQuestion) return;
+
+            if (answers[currentQuestion.id]) {
                 saveAnswer(currentQuestion.id, answers[currentQuestion.id]);
             }
         }, 15000);
-        return () => clearInterval(autoSaveRef.current);
-    }, [currentQuestion, answers, saveAnswer]);
 
+        return () => {
+            if (autoSaveRef.current) {
+                clearInterval(autoSaveRef.current);
+                autoSaveRef.current = null;
+            }
+        };
+    }, [answers, currentQuestion, saveAnswer]);
 
-    // Security: prevent copy/paste
     useEffect(() => {
-        const prevent = (e) => e.preventDefault();
+        const prevent = (event) => event.preventDefault();
+
+        const handleVisibility = () => {
+            if (!document.hidden) return;
+
+            api.post('/logs', {
+                examId: exam?.id,
+                action: 'tab_switch_attempt',
+                details: 'User switched tabs'
+            }).catch(() => { });
+
+            announce('Warning. Please stay on the exam page.', { speakMessage: true, assertive: true });
+        };
+
         document.addEventListener('copy', prevent);
         document.addEventListener('paste', prevent);
         document.addEventListener('cut', prevent);
-
-        // Tab switch detection
-        const handleVisibility = () => {
-            if (document.hidden) {
-                api.post('/logs', {
-                    examId: exam?.id,
-                    action: 'tab_switch_attempt',
-                    details: 'User switched tabs'
-                }).catch(() => { });
-                speak('Warning! Please do not switch tabs during the exam.');
-            }
-        };
         document.addEventListener('visibilitychange', handleVisibility);
 
         return () => {
@@ -121,240 +700,8 @@ export default function ExamPage() {
             document.removeEventListener('cut', prevent);
             document.removeEventListener('visibilitychange', handleVisibility);
         };
-    }, [exam]);
+    }, [announce, exam?.id]);
 
-    const selectOption = useCallback((letter) => {
-        if (!currentQuestion) return;
-        if (currentQuestion.type === 'open-ended') return;
-
-        setPendingAnswer(letter);
-        speak(`You said ${letter}. Yes to save, No to change.`);
-        showFeedback(`Confirm ${letter}`);
-        setShowConfirm(true);
-    }, [currentQuestion, speak]);
-
-    const confirmAnswer = useCallback(async () => {
-        if (!pendingAnswer || !currentQuestion) return;
-        setAnswer(currentQuestion.id, pendingAnswer);
-        saveAnswer(currentQuestion.id, pendingAnswer); // Non-blocking for speed
-        // More descriptive confirmation for a blind user
-        speak('Answer recorded. Say Yes to continue or No to stay here.');
-        showFeedback(`<i className="fa-solid fa-circle-check" aria-hidden="true"></i> Answered ${pendingAnswer}`);
-        setShowConfirm(false);
-        setPendingAnswer(null);
-        setWaitingForContinue(true);
-    }, [pendingAnswer, currentQuestion, setAnswer, saveAnswer, speak]);
-
-    const cancelAnswer = useCallback(() => {
-        setPendingAnswer(null);
-        setShowConfirm(false);
-        speak('What is your answer? Please say A, B, C, or D.');
-    }, [speak]);
-
-
-    const handleOpenEndedSubmit = async () => {
-        if (!currentQuestion) return;
-        const textToSave = pendingDictationRef.current || pendingDictation || openEndedText;
-        if (!textToSave.trim()) return;
-
-        setAnswer(currentQuestion.id, textToSave);
-        await saveAnswer(currentQuestion.id, textToSave);
-
-        speak('Answer recorded, please wait for teacher review.');
-        showFeedback('<i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher...');
-
-        // Clear local state
-        setOpenEndedText('');
-        setPendingDictation('');
-        pendingDictationRef.current = '';
-
-        if (dictationTimeoutRef.current) {
-            clearTimeout(dictationTimeoutRef.current);
-            dictationTimeoutRef.current = null;
-        }
-
-        // advance after short delay
-        setTimeout(() => nextQuestion(), 1000);
-    };
-
-
-
-
-    const handleFinish = async () => {
-        try {
-            // Save any pending answer
-            if (currentQuestion && answers[currentQuestion.id]) {
-                await saveAnswer(currentQuestion.id, answers[currentQuestion.id]);
-            }
-
-            const result = await finishExam();
-            speak(`Exam submitted. Your score is ${result.score} out of ${result.totalPoints}. ${result.percentage} percent.`);
-            navigate('/student/result');
-        } catch (err) {
-            speak('Error finishing exam. Please try again.');
-        }
-    };
-
-
-
-    // auto-save typed open-ended answers after user pauses
-    useEffect(() => {
-        if (currentQuestion && currentQuestion.type === 'open-ended' && openEndedText.trim()) {
-            // schedule save 1.5s after typing stops
-            if (dictationSaveTimer.current) clearTimeout(dictationSaveTimer.current);
-            dictationSaveTimer.current = setTimeout(async () => {
-                const text = openEndedText;
-                setAnswer(currentQuestion.id, text);
-                await saveAnswer(currentQuestion.id, text);
-                speak('Answer recorded, please wait for teacher review.');
-                showFeedback('<i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher...');
-                setOpenEndedText('');
-                setTimeout(() => nextQuestion(), 1000);
-            }, 1500);
-        }
-        // cleanup on unmount or when question changes
-        return () => {
-            if (dictationSaveTimer.current) clearTimeout(dictationSaveTimer.current);
-        };
-    }, [openEndedText, currentQuestion, saveAnswer, setAnswer, speak, showFeedback, nextQuestion]);
-
-    const handleVoiceDictation = useCallback((text) => {
-        const cleaned = text.trim();
-
-        // quick help keywords
-        const lower = cleaned.toLowerCase();
-        if (/\b(understand|help|nervous|anxious|what does)\b/.test(lower)) {
-            requestHelp(cleaned);
-            return;
-        }
-
-        if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
-
-        // accumulate transcript
-        setOpenEndedText(prev => (prev ? `${prev} ${cleaned}` : cleaned));
-        setPendingDictation(prev => {
-            const updated = prev ? `${prev} ${cleaned}` : cleaned;
-            pendingDictationRef.current = updated;
-            return updated;
-        });
-
-        // start capture window (reduced for better responsiveness)
-        if (!dictationTimeoutRef.current) {
-            dictationTimeoutRef.current = setTimeout(() => {
-                dictationTimeoutRef.current = null;
-                setWaitingAnswerConfirm(true);
-                const preview = pendingDictationRef.current || pendingDictation || '';
-                const shortPreview = preview.length > 160 ? `${preview.slice(0, 160)}...` : preview;
-                speak(`I captured your answer: ${shortPreview}. Is it correct? Say Yes or No. Ma keydiyaa jawaabtan? Dheh Haa ama Maya.`);
-            }, 25000);
-        }
-    }, [currentQuestion, pendingDictation, requestHelp, speak]);
-
-    const commandMap = {
-        // navigation
-        'next': () => {
-            setWaitingNextConfirm(false);
-            nextQuestion();
-        },
-        'previous': () => prevQuestion(),
-        'back': () => prevQuestion(),
-        'again': () => { if (currentQuestion) speakQuestion(currentQuestion); },
-        'repeat question': () => { if (currentQuestion) speakQuestion(currentQuestion); },
-
-        // option selection (handled by useVoiceCommands internal 'option' regex)
-        'option': (letter) => selectOption(letter),
-
-        // yes/no handlers for confirmations
-        'yes': () => {
-            if (waitingAnswerConfirm && currentQuestion?.type === 'open-ended') {
-                setWaitingAnswerConfirm(false);
-                handleOpenEndedSubmit();
-                return;
-            }
-            if (showConfirm && pendingAnswer) {
-                confirmAnswer();
-                setWaitingNextConfirm(true);
-                speak('Answer recorded. Go to next question? Say Yes or No.');
-                return;
-            }
-            if (waitingNextConfirm) {
-                setWaitingNextConfirm(false);
-                nextQuestion();
-                return;
-            }
-            if (waitingFinishConfirm) {
-                setWaitingFinishConfirm(false);
-                handleFinish();
-                return;
-            }
-            if (waitingUnansweredDecision) {
-                setWaitingUnansweredDecision(false);
-                goToFirstUnanswered();
-                return;
-            }
-        },
-        'no': () => {
-            if (showConfirm && pendingAnswer) {
-                cancelAnswer();
-                return;
-            }
-            if (waitingAnswerConfirm) {
-                setWaitingAnswerConfirm(false);
-                speak('Okay, please say your answer again. Waayahay, fadlan markale jawaabta dheh.');
-                setOpenEndedText('');
-                setPendingDictation('');
-                pendingDictationRef.current = '';
-                return;
-            }
-            if (waitingNextConfirm) {
-                setWaitingNextConfirm(false);
-                speak('Staying on this question.');
-                return;
-            }
-            if (waitingFinishConfirm) {
-                setWaitingFinishConfirm(false);
-                speak('Submission cancelled.');
-                return;
-            }
-            if (waitingUnansweredDecision) {
-                setWaitingUnansweredDecision(false);
-                speak('Please answer the remaining questions before finishing.');
-                return;
-            }
-        },
-
-        // finish
-        'finish': () => {
-            if (unansweredQuestions.length > 0) {
-                setWaitingUnansweredDecision(true);
-                speak(`You still have ${unansweredQuestions.length} unanswered questions. Should I take you to the first one? Say Yes or No.`);
-            } else {
-                setWaitingFinishConfirm(true);
-                speak('Finish the exam now? Say Yes or No.');
-            }
-        },
-
-        // Open-Ended specific
-        'save answer': () => handleOpenEndedSubmit(),
-        'xaree': () => handleOpenEndedSubmit(),
-        'keydi': () => handleOpenEndedSubmit(),
-        'clear answer': () => {
-            setOpenEndedText('');
-            setPendingDictation('');
-            pendingDictationRef.current = '';
-            speak('Answer cleared. Jawaabtii waa la tirtiray.');
-        },
-        'tir-tir': () => {
-            setOpenEndedText('');
-            setPendingDictation('');
-            pendingDictationRef.current = '';
-            speak('Answer cleared. Jawaabtii waa la tirtiray.');
-        }
-    };
-
-    const { isListening, transcript, lastCommand, startListening, stopListening, toggleListening } = useVoiceCommands(commandMap, true, handleVoiceDictation);
-
-    // Pause STT while TTS is speaking to avoid echo; resume after
     useEffect(() => {
         if (isSpeaking) {
             stopListening();
@@ -363,47 +710,199 @@ export default function ExamPage() {
         }
     }, [isSpeaking, startListening, stopListening]);
 
-    // Cleanup for listening prompt
-    useEffect(() => () => {
-        if (listeningPromptRef.current) clearTimeout(listeningPromptRef.current);
-    }, []);
-
-    // Read question aloud when it changes and set a single gentle prompt
-    useEffect(() => {
-        if (currentQuestion) {
-            const text = currentQuestion.questionText +
-                (currentQuestion.options && currentQuestion.options.length
-                    ? '. Options: ' + currentQuestion.options.map(o => `${o.label}, ${o.text}`).join('. ') + '.'
-                    : '');
-            speak(text);
-            if (listeningPromptRef.current) clearTimeout(listeningPromptRef.current);
-            if (currentQuestion.type === 'mcq' || currentQuestion.type === 'true-false') {
-                listeningPromptRef.current = setTimeout(() => {
-                    speak('Please answer with A, B, C, or D.');
-                }, 8000);
-            } else if (currentQuestion.type === 'open-ended') {
-                listeningPromptRef.current = setTimeout(() => {
-                    speak('You can speak your answer. Say "Save Answer" or "Xaree" when you are done. Waad ku hadli kartaa jawaabtaada. Dheh "Xaree" markaad dhammayso.');
-                }, 8000);
-            }
-        }
-    }, [currentQuestion, speak]);
-
-    // Start voice listening on load
     useEffect(() => {
         startListening();
-        return () => stopListening();
-    }, []);
 
-    // Format timer
-    const formatTime = (secs) => {
-        if (secs < 0) secs = 0;
-        const m = Math.floor(secs / 60);
-        const s = secs % 60;
-        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    };
+        return () => {
+            clearDictationTimer();
+            clearListeningPrompt();
+            clearAnnouncementTimer(feedbackTimerRef);
+            clearAnnouncementTimer(statusTimerRef);
+            clearAnnouncementTimer(alertTimerRef);
+            stopListening();
+            stopTTS();
+        };
+    }, [clearAnnouncementTimer, clearDictationTimer, clearListeningPrompt, startListening, stopListening, stopTTS]);
 
-    const timerClass = timeRemaining <= 60 ? 'danger' : timeRemaining <= 300 ? 'warning' : '';
+    useEffect(() => {
+        if (!currentQuestion) return;
+
+        resetPromptState();
+        clearDictationTimer();
+        clearListeningPrompt();
+
+        if (currentQuestion.type === 'open-ended') {
+            const existingDraft = typeof answers[currentQuestion.id] === 'string' ? answers[currentQuestion.id] : '';
+            setOpenEndedText(existingDraft);
+            setPendingDictation(existingDraft);
+            pendingDictationRef.current = existingDraft;
+        } else {
+            setOpenEndedText('');
+            setPendingDictation('');
+            pendingDictationRef.current = '';
+        }
+
+        const spokenQuestion = buildQuestionSpeech(
+            currentQuestion,
+            currentIndex,
+            questions.length,
+            currentSectionName,
+            answers[currentQuestion.id]
+        );
+
+        const intro = hasAnnouncedIntroRef.current
+            ? ''
+            : `Exam started for ${user?.name || 'student'}. The current question is focused for screen readers.`;
+
+        speak([intro, spokenQuestion].filter(Boolean).join(' '), { rate: 1.0 });
+        updateLiveRegion(
+            setScreenReaderStatus,
+            statusTimerRef,
+            `${currentSectionName ? `${currentSectionName}. ` : ''}Question ${currentIndex + 1} of ${questions.length}. ${getQuestionTypeLabel(currentQuestion.type)}.`
+        );
+
+        hasAnnouncedIntroRef.current = true;
+
+        requestAnimationFrame(() => {
+            questionHeadingRef.current?.focus();
+        });
+
+        listeningPromptRef.current = setTimeout(() => {
+            const prompt = currentQuestion.type === 'open-ended'
+                ? 'You can speak your answer now. Say save answer when you are done.'
+                : 'Say A, B, C, or D to answer, or use Alt plus A to D on the keyboard.';
+
+            announce(prompt, { speakMessage: true });
+        }, 7000);
+    }, [
+        announce,
+        clearDictationTimer,
+        clearListeningPrompt,
+        currentIndex,
+        currentQuestion,
+        currentSectionName,
+        questions.length,
+        resetPromptState,
+        speak,
+        updateLiveRegion,
+        user?.name
+    ]);
+
+    useEffect(() => {
+        if (showConfirm) {
+            confirmYesButtonRef.current?.focus();
+        }
+    }, [showConfirm]);
+
+    useEffect(() => {
+        if (showFinishModal) {
+            finishContinueButtonRef.current?.focus();
+        }
+    }, [showFinishModal]);
+
+    useEffect(() => {
+        const handleKeydown = (event) => {
+            const isAltShortcut = event.altKey && !event.ctrlKey && !event.metaKey;
+            const key = event.key.toLowerCase();
+            const target = event.target;
+            const isEditable = target instanceof HTMLElement
+                && (target.tagName === 'TEXTAREA'
+                    || target.tagName === 'INPUT'
+                    || target.getAttribute('contenteditable') === 'true');
+
+            if (event.key === 'Escape') {
+                if (showConfirm) {
+                    event.preventDefault();
+                    cancelAnswer();
+                    return;
+                }
+
+                if (showFinishModal) {
+                    event.preventDefault();
+                    closeFinishDialog();
+                    return;
+                }
+
+                event.preventDefault();
+                stopTTS();
+                announce('Speech stopped.', { toast: true, assertive: true });
+                return;
+            }
+
+            if (isEditable) {
+                if (currentQuestion?.type === 'open-ended' && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    handleOpenEndedSubmit();
+                }
+                return;
+            }
+
+            if (!isAltShortcut) return;
+
+            if (key === 'n') {
+                event.preventDefault();
+                moveToNextQuestion();
+                return;
+            }
+
+            if (key === 'p') {
+                event.preventDefault();
+                moveToPreviousQuestion();
+                return;
+            }
+
+            if (key === 'r') {
+                event.preventDefault();
+                readCurrentQuestion();
+                return;
+            }
+
+            if (key === 'f') {
+                event.preventDefault();
+                openFinishDialog();
+                return;
+            }
+
+            if (key === 'u') {
+                event.preventDefault();
+                jumpToFirstUnanswered();
+                return;
+            }
+
+            if (key === 'm' && voiceSupported) {
+                event.preventDefault();
+                toggleListening();
+                announce(isListening ? 'Microphone off.' : 'Microphone on.', { speakMessage: true, assertive: true });
+                return;
+            }
+
+            if ((key === 'a' || key === 'b' || key === 'c' || key === 'd') && currentQuestion?.type !== 'open-ended') {
+                event.preventDefault();
+                selectOption(key.toUpperCase());
+            }
+        };
+
+        window.addEventListener('keydown', handleKeydown);
+        return () => window.removeEventListener('keydown', handleKeydown);
+    }, [
+        announce,
+        cancelAnswer,
+        closeFinishDialog,
+        currentQuestion?.type,
+        handleOpenEndedSubmit,
+        isListening,
+        jumpToFirstUnanswered,
+        moveToNextQuestion,
+        moveToPreviousQuestion,
+        openFinishDialog,
+        readCurrentQuestion,
+        selectOption,
+        showConfirm,
+        showFinishModal,
+        stopTTS,
+        toggleListening,
+        voiceSupported
+    ]);
 
     if (!exam || !questions.length) {
         return (
@@ -416,223 +915,334 @@ export default function ExamPage() {
 
     return (
         <div className="page" style={{ paddingTop: 0 }}>
-            {/* Top bar */}
+            <a className="exam-skip-link" href="#current-question-heading">Skip to current question</a>
+
+            <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                {screenReaderStatus}
+            </div>
+            <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
+                {screenReaderAlert}
+            </div>
+
             <div className="navbar">
                 <div className="navbar-brand">
                     <span className="icon" aria-hidden="true"><i className="fa-solid fa-clipboard-list"></i></span>
                     {exam.title}
                 </div>
                 <div className="navbar-actions">
-                    <div className={`timer ${timerClass}`}>
-                        <i className="fa-solid fa-stopwatch" aria-hidden="true"></i> {formatTime(timeRemaining)}
+                    <div className={`timer ${timerClass}`} role="status" aria-live="polite" aria-label={isTimedExam ? `Time remaining ${formatTime(timeRemaining)}` : 'Untimed exam'}>
+                        <i className="fa-solid fa-stopwatch" aria-hidden="true"></i>
+                        {isTimedExam ? formatTime(timeRemaining) : 'No limit'}
                     </div>
                 </div>
             </div>
 
-            <div className="app-container" style={{ paddingTop: 24 }}>
-                {/* Progress */}
-                <div className="flex items-center justify-between mb-md">
-                    <span style={{ fontWeight: 600 }}>
-                        Question {currentIndex + 1} of {questions.length}
-                    </span>
-                    <span className="text-muted">
-                        {answeredCount} answered · {unansweredQuestions.length} remaining
-                    </span>
-                </div>
-                <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${(answeredCount / questions.length) * 100}%` }}></div>
-                </div>
-
-                {/* Section tabs */}
-                <div className="section-tabs mt-md">
-                    {sections.map((sec, i) => (
-                        <button
-                            key={sec._id}
-                            className={`section-tab ${currentQuestion?.sectionId === sec._id ? 'active' : ''}`}
-                            onClick={() => {
-                                const idx = questions.findIndex(q => q.sectionId === sec._id);
-                                if (idx >= 0) goToQuestion(idx);
-                            }}
-                            aria-label={`Go to ${sec.name}`}
+            <main className="app-container exam-shell">
+                <section className="card exam-overview" aria-labelledby="exam-accessibility-title">
+                    <div className="exam-support-header">
+                        <div>
+                            <h2 id="exam-accessibility-title" style={{ marginBottom: 8 }}>Blind-Friendly Exam Controls</h2>
+                            <p className="text-muted">
+                                Voice, keyboard, and screen reader support are all active here so the student can move through the exam without relying on sight.
+                            </p>
+                        </div>
+                        <div
+                            className={`voice-indicator ${isListening ? 'listening' : ''}`}
+                            role="status"
+                            aria-live="polite"
+                            aria-label={isListening ? 'Voice listening is on' : 'Voice listening is off'}
                         >
-                            {sec.name}
-                        </button>
-                    ))}
-                </div>
-
-                {/* Question Card */}
-                {currentQuestion && (
-                    <div className="question-card active" role="main" aria-live="polite">
-                        <div className="question-number">
-                            {getCurrentSectionName()} · Question {currentQuestion.order}
-                            <span className="badge badge-info" style={{ marginLeft: 12 }}>
-                                {currentQuestion.type === 'mcq' ? 'Multiple Choice' : currentQuestion.type === 'true-false' ? 'True/False' : 'Open-Ended'}
-                            </span>
-                            <span className="badge badge-warning" style={{ marginLeft: 8 }}>
-                                {currentQuestion.points} pt{currentQuestion.points !== 1 ? 's' : ''}
-                            </span>
+                            <span className="voice-dot" aria-hidden="true"></span>
+                            <span>{voiceSupported ? (isListening ? 'Listening' : 'Voice Paused') : 'Voice Not Supported'}</span>
                         </div>
-
-                        <div className="question-text">
-                            {currentQuestion.questionText}
-                        </div>
-
-                        {/* MCQ / True-False Options */}
-                        {(currentQuestion.type === 'mcq' || currentQuestion.type === 'true-false') && (
-                            <div className="option-list">
-                                {currentQuestion.options.map((opt) => (
-                                    <button
-                                        key={opt.label}
-                                        className={`option-btn ${answers[currentQuestion.id] === opt.label ? 'selected' : ''}`}
-                                        onClick={() => selectOption(opt.label)}
-                                        aria-label={`Option ${opt.label}: ${opt.text}`}
-                                        aria-pressed={answers[currentQuestion.id] === opt.label}
-                                    >
-                                        <span className="option-label">{opt.label}</span>
-                                        <span>{opt.text}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Open-Ended */}
-                        {currentQuestion.type === 'open-ended' && (
-                            <div>
-                                <textarea
-                                    className="input"
-                                    value={openEndedText || answers[currentQuestion.id] || ''}
-                                    onChange={(e) => setOpenEndedText(e.target.value)}
-                                    placeholder="Type your answer here, or use voice input..."
-                                    rows={6}
-                                    aria-label="Your answer"
-                                />
-                        {/* realtime transcript display */}
-                        {transcript && currentQuestion.type === 'open-ended' && (
-                            <div style={{ marginTop: 8, fontSize: 'var(--font-size-sm)', color: '#555' }}>
-                                Heard: {transcript}
-                            </div>
-                        )}
-                                <div className="flex gap-sm mt-md">
-                                    <button className="btn btn-primary" onClick={handleOpenEndedSubmit}>
-                                        <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Answer
-                                    </button>
-                                    <button className="btn btn-secondary" onClick={() => speak('You can type your answer or speak it. Say "Save Answer" or "Xaree" when you are done.')}>
-                                        <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> Voice Hint
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Answer confirmation */}
-                        {answers[currentQuestion.id] && (
-                            <div>
-                                <div className="badge badge-success mt-md" style={{ padding: 12 }}>
-                                    <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Current answer: {answers[currentQuestion.id]}
-                                </div>
-                                {currentQuestion.type === 'open-ended' && (
-                                    <div className="badge badge-warning mt-sm" style={{ padding: 8 }}>
-                                        <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Waiting for teacher review...
-                                    </div>
-                                )}
-                            </div>
-                        )}
                     </div>
+
+                    <div className="exam-support-actions">
+                        <button type="button" className="btn btn-secondary" onClick={readAccessibilityHelp}>
+                            <i className="fa-solid fa-circle-info" aria-hidden="true"></i> Read Help
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                if (!voiceSupported) {
+                                    announce('Voice input is not supported in this browser.', { speakMessage: true, assertive: true });
+                                    return;
+                                }
+
+                                toggleListening();
+                                announce(isListening ? 'Microphone off.' : 'Microphone on.', { speakMessage: true, assertive: true });
+                            }}
+                        >
+                            <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i>
+                            {isListening ? 'Pause Voice' : 'Resume Voice'}
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={jumpToFirstUnanswered} disabled={!unansweredQuestions.length}>
+                            <i className="fa-solid fa-list-check" aria-hidden="true"></i> Review Unanswered
+                        </button>
+                    </div>
+
+                    <div className="exam-command-list" id="exam-command-help">
+                        <p><strong>Voice:</strong> Next, Previous, Repeat Question, Save Answer, Finish, Review Unanswered, Yes, No.</p>
+                        <p><strong>Keyboard:</strong> Alt + N, Alt + P, Alt + R, Alt + F, Alt + U, Alt + A-D, and Ctrl + Enter inside long answers.</p>
+                        <p><strong>Status:</strong> Last heard command: {lastCommand || 'None yet'}.</p>
+                    </div>
+                </section>
+
+                <section className="card exam-progress-card" aria-labelledby="exam-progress-title">
+                    <div className="flex items-center justify-between gap-md">
+                        <h2 id="exam-progress-title">Exam Progress</h2>
+                        <span className="badge badge-info">{progressPercent}% complete</span>
+                    </div>
+
+                    <div className="exam-progress-stats">
+                        <span className="exam-stat-pill">Question {currentIndex + 1} of {questions.length}</span>
+                        <span className="exam-stat-pill">{answeredCount} answered</span>
+                        <span className="exam-stat-pill">{unansweredQuestions.length} remaining</span>
+                        {currentSectionName && <span className="exam-stat-pill">Section: {currentSectionName}</span>}
+                    </div>
+
+                    <div className="progress-bar" aria-hidden="true">
+                        <div className="progress-fill" style={{ width: `${progressPercent}%` }}></div>
+                    </div>
+                </section>
+
+                {sections.length > 0 && (
+                    <nav className="section-tabs exam-section-nav" aria-label="Exam sections">
+                        {sections.map((section) => (
+                            <button
+                                key={section._id}
+                                type="button"
+                                className={`section-tab ${currentQuestion?.sectionId === section._id ? 'active' : ''}`}
+                                onClick={() => {
+                                    const sectionIndex = questions.findIndex((question) => question.sectionId === section._id);
+                                    if (sectionIndex >= 0) {
+                                        moveToQuestion(sectionIndex);
+                                    }
+                                }}
+                                aria-current={currentQuestion?.sectionId === section._id ? 'true' : undefined}
+                                aria-label={`Go to section ${section.name}`}
+                            >
+                                {section.name}
+                            </button>
+                        ))}
+                    </nav>
                 )}
 
-                {/* Navigation buttons */}
-                <div className="flex justify-between mt-lg">
-                    <button
-                        className="btn btn-secondary"
-                        onClick={prevQuestion}
-                        disabled={currentIndex === 0}
-                        aria-label="Previous Question"
+                {currentQuestion && (
+                    <section
+                        className="question-card active"
+                        aria-labelledby="current-question-heading"
+                        aria-describedby="question-guidance"
                     >
-                        <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous
-                    </button>
-                    <div className="flex gap-sm">
-                        <button className="btn btn-secondary" onClick={() => { if (currentQuestion) speakQuestion(currentQuestion); }}>
-                            <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Repeat
-                        </button>
-                        <button className="btn btn-danger" onClick={() => {
-                            if (unansweredQuestions.length > 0) {
-                                speak(`You have ${unansweredQuestions.length} unanswered questions. Say Yes to submit, or No to cancel.`);
-                            }
-                            setShowFinishModal(true);
-                        }}>
-                            <i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish
-                        </button>
-                    </div>
-                    <button
-                        className="btn btn-primary"
-                        onClick={nextQuestion}
-                        disabled={currentIndex === questions.length - 1}
-                        aria-label="Next Question"
-                    >
-                        Next <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
-                    </button>
-                </div>
-
-                {/* TTS Speed Control */}
-                <div className="card mt-lg" style={{ padding: 16 }}>
-                    <div className="flex items-center gap-md">
-                        <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}><i className="fa-solid fa-volume-high" aria-hidden="true"></i> Speech Speed:</span>
-                        <input
-                            type="range"
-                            min="0.5"
-                            max="2"
-                            step="0.1"
-                            value={rate}
-                            onChange={(e) => setRate(parseFloat(e.target.value))}
-                            aria-label="Speech rate"
-                            style={{ flex: 1 }}
-                        />
-                        <span style={{ fontWeight: 700, minWidth: 40 }}>{rate}x</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Confirm answer modal */}
-            {showConfirm && (
-                <div className="modal-overlay" role="dialog" aria-modal="true">
-                    <div className="modal">
-                        <h2>Confirm Answer</h2>
-                        <p>You selected <strong>Option {pendingAnswer}</strong>. Confirm?</p>
-                        <div className="modal-actions">
-                            <button className="btn btn-secondary" onClick={cancelAnswer}><i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> No</button>
-                            <button className="btn btn-primary" onClick={confirmAnswer}><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Yes</button>
+                        <div className="question-number exam-question-meta">
+                            <span>{currentSectionName || 'Exam'} - Question {currentQuestion.order}</span>
+                            <span className="badge badge-info">
+                                {getQuestionTypeLabel(currentQuestion.type)}
+                            </span>
+                            <span className="badge badge-warning">
+                                {currentQuestion.points} pt{currentQuestion.points === 1 ? '' : 's'}
+                            </span>
                         </div>
-                        <p className="text-muted mt-md" style={{ fontSize: 'var(--font-size-sm)' }}>
-                            Say &quot;Yes&quot; or &quot;No&quot;
+
+                        <h1
+                            id="current-question-heading"
+                            className="question-text"
+                            tabIndex="-1"
+                            ref={questionHeadingRef}
+                        >
+                            {currentQuestion.questionText}
+                        </h1>
+
+                        <p id="question-guidance" className="exam-guidance">
+                            {questionGuidance}
                         </p>
+
+                        {(currentQuestion.type === 'mcq' || currentQuestion.type === 'true-false') && (
+                            <div className="option-list" role="radiogroup" aria-label="Answer choices" aria-describedby="question-guidance">
+                                {currentQuestion.options.map((option) => {
+                                    const isSelected = currentAnswer === option.label;
+
+                                    return (
+                                        <button
+                                            key={option.label}
+                                            type="button"
+                                            className={`option-btn ${isSelected ? 'selected' : ''}`}
+                                            role="radio"
+                                            aria-checked={isSelected}
+                                            aria-label={`Option ${option.label}. ${option.text}`}
+                                            onClick={() => selectOption(option.label)}
+                                        >
+                                            <span className="option-label">{option.label}</span>
+                                            <span>{option.text}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        {currentQuestion.type === 'open-ended' && (
+                            <div>
+                                <label className="sr-only" htmlFor="open-ended-answer">Your answer</label>
+                                <textarea
+                                    id="open-ended-answer"
+                                    ref={openEndedInputRef}
+                                    className="input"
+                                    value={openEndedText}
+                                    onChange={handleOpenEndedChange}
+                                    placeholder="Type your answer here, or use voice input."
+                                    rows={8}
+                                    aria-describedby="question-guidance open-ended-support"
+                                />
+
+                                <p id="open-ended-support" className="text-muted mt-sm">
+                                    Speak your answer, then pause. The system will read it back and ask Yes or No. Say No to keep speaking, or say Yes to save it.
+                                </p>
+
+                                {transcript && (
+                                    <div className="exam-transcript" aria-live="polite">
+                                        <strong>Heard:</strong> {transcript}
+                                    </div>
+                                )}
+
+                                <div className="exam-support-actions mt-md">
+                                    <button type="button" className="btn btn-primary" onClick={handleOpenEndedSubmit}>
+                                        <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Answer
+                                    </button>
+                                    <button type="button" className="btn btn-secondary" onClick={clearOpenEndedAnswer}>
+                                        <i className="fa-solid fa-eraser" aria-hidden="true"></i> Clear Answer
+                                    </button>
+                                    <button type="button" className="btn btn-secondary" onClick={() => requestHelp('Please explain the current question in simpler words.')}>
+                                        <i className="fa-solid fa-life-ring" aria-hidden="true"></i> Explain Question
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {currentQuestion.type === 'open-ended' && hasUnsavedOpenEndedDraft && (
+                            <div className="exam-answer-state" aria-live="polite">
+                                <div className="badge badge-warning" style={{ padding: 12 }}>
+                                    <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i> Unsaved draft
+                                </div>
+                                <div className="exam-answer-preview">
+                                    {openEndedDraft}
+                                </div>
+                            </div>
+                        )}
+
+                        {currentAnswer && (
+                            <div className="exam-answer-state" aria-live="polite">
+                                <div className="badge badge-success" style={{ padding: 12 }}>
+                                    <i className="fa-solid fa-circle-check" aria-hidden="true"></i> {currentQuestion.type === 'open-ended' ? 'Saved answer' : 'Answer saved'}
+                                </div>
+                                <div className="exam-answer-preview">
+                                    {getCurrentAnswerSummary(currentQuestion, currentAnswer)}
+                                </div>
+                            </div>
+                        )}
+                    </section>
+                )}
+
+                <section className="exam-navigation" aria-label="Question navigation">
+                    <div className="exam-nav-main">
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={moveToPreviousQuestion}
+                            disabled={currentIndex === 0}
+                            aria-label="Previous question"
+                        >
+                            <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous
+                        </button>
+
+                        <div className="exam-nav-secondary">
+                            <button type="button" className="btn btn-secondary" onClick={() => readCurrentQuestion()}>
+                                <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Repeat
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={jumpToFirstUnanswered} disabled={!unansweredQuestions.length}>
+                                <i className="fa-solid fa-list-check" aria-hidden="true"></i> Unanswered
+                            </button>
+                            <button type="button" className="btn btn-danger" onClick={openFinishDialog}>
+                                <i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish
+                            </button>
+                        </div>
+
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={moveToNextQuestion}
+                            disabled={currentIndex === questions.length - 1}
+                            aria-label="Next question"
+                        >
+                            Next <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                        </button>
+                    </div>
+
+                    <div className="card">
+                        <div className="exam-rate-control">
+                            <span style={{ fontWeight: 600 }}>
+                                <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Speech Speed
+                            </span>
+                            <input
+                                type="range"
+                                min="0.5"
+                                max="2"
+                                step="0.1"
+                                value={rate}
+                                onChange={(event) => setRate(parseFloat(event.target.value))}
+                                aria-label="Speech rate"
+                                style={{ flex: 1 }}
+                            />
+                            <span style={{ fontWeight: 700, minWidth: 40 }}>{rate}x</span>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            {showConfirm && (
+                <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-answer-title" aria-describedby="confirm-answer-description">
+                    <div className="modal">
+                        <h2 id="confirm-answer-title">Confirm Answer</h2>
+                        <p id="confirm-answer-description">
+                            You selected <strong>{getCurrentAnswerSummary(currentQuestion, pendingAnswer)}</strong>. Do you want to save it?
+                        </p>
+                        <div className="modal-actions">
+                            <button type="button" className="btn btn-secondary" onClick={cancelAnswer}>
+                                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> No
+                            </button>
+                            <button type="button" className="btn btn-primary" onClick={confirmAnswer} ref={confirmYesButtonRef}>
+                                <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Yes
+                            </button>
+                        </div>
+                        <p className="exam-modal-note">Voice shortcut: say Yes to save or No to change.</p>
                     </div>
                 </div>
             )}
 
-            {/* Finish modal */}
             {showFinishModal && (
-                <div className="modal-overlay" role="dialog" aria-modal="true">
+                <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="finish-exam-title" aria-describedby="finish-exam-description">
                     <div className="modal">
-                        <h2><i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish Exam?</h2>
-                        {unansweredQuestions.length > 0 && (
-                            <p style={{ color: 'var(--warning)', fontWeight: 600, marginBottom: 12 }}>
-                                <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> You have {unansweredQuestions.length} unanswered question{unansweredQuestions.length !== 1 ? 's' : ''}.
-                            </p>
-                        )}
-                        <p>Are you sure you want to submit? This cannot be undone.</p>
+                        <h2 id="finish-exam-title">
+                            <i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish Exam
+                        </h2>
+                        <p id="finish-exam-description">
+                            {unansweredQuestions.length > 0
+                                ? `You still have ${unansweredQuestions.length} unanswered question${unansweredQuestions.length === 1 ? '' : 's'}.`
+                                : 'All questions currently have answers.'}
+                        </p>
+                        <p>Submitting the exam cannot be undone.</p>
                         <div className="modal-actions">
-                            <button className="btn btn-secondary" onClick={() => { setShowFinishModal(false); speak('Continuing exam.'); }}>
-                                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> No, Continue
+                            <button type="button" className="btn btn-secondary" onClick={closeFinishDialog} ref={finishContinueButtonRef}>
+                                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Continue Exam
                             </button>
-                            <button className="btn btn-secondary" onClick={() => { setShowFinishModal(false); goToFirstUnanswered(); speak('Going to unanswered questions.'); }}>
+                            <button type="button" className="btn btn-secondary" onClick={jumpToFirstUnanswered} disabled={!unansweredQuestions.length}>
                                 <i className="fa-solid fa-list-check" aria-hidden="true"></i> Review Unanswered
                             </button>
-                            <button className="btn btn-danger" onClick={() => { setShowFinishModal(false); handleFinish(); }}>
-                                <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Yes, Submit
+                            <button type="button" className="btn btn-danger" onClick={handleFinish}>
+                                <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Submit Exam
                             </button>
                         </div>
-                        <p className="text-muted mt-md" style={{ fontSize: 'var(--font-size-sm)' }}>
-                            Say &quot;Yes&quot; to submit or &quot;No&quot; to continue
-                        </p>
+                        <p className="exam-modal-note">Voice shortcut: say &quot;Review Unanswered&quot;, &quot;Submit Exam&quot;, or &quot;No&quot; to continue.</p>
                     </div>
                 </div>
             )}

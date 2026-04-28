@@ -15,6 +15,17 @@ export function ExamProvider({ children }) {
 
     const autoSaveTimer = useRef(null);
 
+    const resetExamSession = useCallback(() => {
+        setExam(null);
+        setSections([]);
+        setQuestions([]);
+        setCurrentIndex(0);
+        setAnswers({});
+        setStartTime(null);
+        setIsFinished(false);
+        setResult(null);
+    }, []);
+
     const startExam = useCallback((examData, sectionsData, questionsData) => {
         setExam(examData);
         setSections(sectionsData);
@@ -109,6 +120,7 @@ export function ExamProvider({ children }) {
         result,
         answeredCount,
         unansweredQuestions,
+        resetExamSession,
         startExam,
         goToQuestion,
         nextQuestion,

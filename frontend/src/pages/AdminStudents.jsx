@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useTTS } from '../hooks/useTTS';
 import api from '../api/axios';
+import { normalizeStudentIdFromSpeech, sanitizeStudentId } from '../utils/studentIdSpeech';
 
 export default function AdminStudents() {
-    const { speak } = useTTS();
     const { user } = useAuth();
     const isSuper = user?.role === 'super_admin';
 
@@ -16,12 +15,17 @@ export default function AdminStudents() {
     const [showStudentForm, setShowStudentForm] = useState(false);
     const [newStudent, setNewStudent] = useState({ name: '', studentId: '', email: '', classId: '' });
     const [error, setError] = useState(null);
-    const [editingId, setEditingId] = useState(null);
-    const [editForm, setEditForm] = useState({ name: '', email: '', classId: '' });
+    // Voice Recording State
+    const [isListeningId, setIsListeningId] = useState(false);
+    const recognitionRef = useRef(null);
+    const recordingTimeoutRef = useRef(null);
+    const isManuallyStoppedRef = useRef(true);
 
-    // New state for class-based view
+    // ... (Keep existing load functions)
     const [selectedClass, setSelectedClass] = useState(null);
     const [studentLoading, setStudentLoading] = useState(false);
+    const [editingId, setEditingId] = useState(null);
+    const [editForm, setEditForm] = useState({ name: '', email: '', classId: '' });
 
     const loadFaculties = async () => {
         if (!isSuper) return;
@@ -81,11 +85,121 @@ export default function AdminStudents() {
         }
     }, [selectedClass]);
 
+    // Handle Voice Id Listening
+    const toggleListenId = () => {
+        if (isListeningId) {
+            stopListening();
+        } else {
+            setNewStudent(prev => ({ ...prev, studentId: '' })); // Clear old ID
+            isManuallyStoppedRef.current = false;
+            startListening();
+
+            // Auto stop firmly after 2 minutes (120,000 ms)
+            if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+            recordingTimeoutRef.current = setTimeout(() => {
+                stopListening();
+            }, 120000);
+        }
+    };
+
+    const stopListening = () => {
+        isManuallyStoppedRef.current = true;
+        setIsListeningId(false);
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.stop();
+            } catch (e) {
+                // Ignore stop error
+            }
+        }
+        if (recordingTimeoutRef.current) {
+            clearTimeout(recordingTimeoutRef.current);
+        }
+    };
+
+    const startListening = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert('Your browser does not support voice input.');
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        const parseWordsToId = (text) => {
+            return normalizeStudentIdFromSpeech(text) || sanitizeStudentId(text);
+        };
+
+        recognition.onresult = (event) => {
+            let finalTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript;
+                }
+            }
+
+            if (finalTranscript) {
+                const newParts = parseWordsToId(finalTranscript);
+                if (newParts) {
+                    setNewStudent(prev => {
+                        const current = sanitizeStudentId(prev.studentId);
+                        let updatedId = current + newParts;
+
+                        // Avoid duplicate chunks when recognizer repeats a final segment
+                        if (current === newParts || current.endsWith(newParts)) {
+                            updatedId = current;
+                        } else if (newParts.startsWith(current)) {
+                            updatedId = newParts;
+                        }
+
+                        return { ...prev, studentId: updatedId };
+                    });
+                }
+            }
+        };
+
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            // Don't auto stop on errors like no-speech, let it retry
+        };
+
+        recognition.onend = () => {
+            // Auto-restart if we haven't manually stopped it & time hasn't run out
+            if (!isManuallyStoppedRef.current) {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    console.error("Restart error", e);
+                }
+            } else {
+                setIsListeningId(false);
+            }
+        };
+
+        try {
+            recognition.start();
+            recognitionRef.current = recognition;
+            setIsListeningId(true);
+        } catch (e) {
+            setIsListeningId(false);
+        }
+    };
+
+
     const addStudent = async (e) => {
         e.preventDefault();
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
-            const payload = { ...newStudent, classId: selectedClass._id, facultyId };
+            const cleanStudentId = sanitizeStudentId(newStudent.studentId);
+            if (!cleanStudentId) {
+                alert('Student ID is required.');
+                return;
+            }
+
+            const payload = { ...newStudent, studentId: cleanStudentId, classId: selectedClass._id, facultyId };
             await api.post('/exams/students', payload);
             setNewStudent({ name: '', studentId: '', email: '', classId: '' });
             setShowStudentForm(false);
@@ -158,8 +272,26 @@ export default function AdminStudents() {
                                 <input className="input" value={newStudent.name} onChange={e => setNewStudent({ ...newStudent, name: e.target.value })} required placeholder="e.g. Ahmed Ali" />
                             </div>
                             <div className="input-group">
-                                <label>Student ID</label>
-                                <input className="input" value={newStudent.studentId} onChange={e => setNewStudent({ ...newStudent, studentId: e.target.value })} required placeholder="e.g. STU123" />
+                                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>Student ID</span>
+                                    <button
+                                        type="button"
+                                        onClick={toggleListenId}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            color: isListeningId ? 'red' : 'inherit',
+                                            fontSize: '1.2rem',
+                                            animation: isListeningId ? 'pulse 1.5s infinite' : 'none'
+                                        }}
+                                        title="Record ID Voice (Up to 2 mins)"
+                                    >
+                                        <i className="fa-solid fa-microphone"></i>
+                                    </button>
+                                </label>
+                                <input className="input" value={newStudent.studentId} onChange={e => setNewStudent({ ...newStudent, studentId: sanitizeStudentId(e.target.value) })} maxLength={40} required placeholder="e.g. CA220199" />
+                                {isListeningId && <small style={{ color: 'red' }}>Listening for ID (max 2 mins)... You can speak letter by letter.</small>}
                             </div>
                             <div className="input-group">
                                 <label>Email Address</label>
@@ -276,4 +408,3 @@ export default function AdminStudents() {
         </div>
     );
 }
-

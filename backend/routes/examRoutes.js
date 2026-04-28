@@ -10,6 +10,7 @@ const Result = require('../models/Result');
 const ActivityLog = require('../models/ActivityLog');
 const Student = require('../models/Student');
 const axios = require('axios');
+const { buildStudentExamQueue } = require('../utils/studentExamQueue');
 
 const router = express.Router();
 
@@ -390,10 +391,15 @@ router.put('/:examId/students/:studentId/responses/:responseId', verifyToken, re
         const question = await Question.findById(response.questionId);
         if (!question) return res.status(404).json({ message: 'Question not found.' });
 
+        const maxPoints = Number(question.points || 1);
         // If score is explicitly provided in updates, use it; otherwise default to points/0
         if (typeof updates.score === 'undefined' || updates.score === null || updates.score === '') {
-            updates.score = updates.isCorrect ? (question.points || 1) : 0;
+            updates.score = updates.isCorrect ? maxPoints : 0;
         }
+
+        const numericScore = Number(updates.score);
+        const safeScore = Number.isFinite(numericScore) ? numericScore : 0;
+        updates.score = Math.min(Math.max(safeScore, 0), maxPoints);
 
         response.isCorrect = !!updates.isCorrect;
         response.score = Number(updates.score);
@@ -619,10 +625,33 @@ router.post('/:id/generate-codes', verifyToken, requireAdmin, async (req, res) =
    STUDENT ROUTES
    ============================================================ */
 
+// GET /api/exams/student/queue — active exams queue for current student
+router.get('/student/queue', verifyToken, requireStudent, async (req, res) => {
+    try {
+        const student = await Student.findOne({ studentId: req.user.studentId });
+        if (!student) {
+            return res.status(404).json({ message: 'Student not found.' });
+        }
+
+        const queue = await buildStudentExamQueue(student);
+        res.json({
+            student: {
+                id: student._id,
+                name: student.name,
+                studentId: student.studentId
+            },
+            ...queue
+        });
+    } catch (error) {
+        console.error('Student queue error:', error);
+        res.status(500).json({ message: 'Error fetching student exam queue.' });
+    }
+});
+
 // POST /api/exams/:id/start — Start exam
 router.post('/:id/start', verifyToken, requireStudent, async (req, res) => {
     try {
-        const exam = await Exam.findById(req.params.id);
+        const exam = await Exam.findById(req.params.id).populate('subjectId', 'name');
         if (!exam || !exam.active) {
             return res.status(404).json({ message: 'Exam not found or not active.' });
         }
@@ -649,7 +678,8 @@ router.post('/:id/start', verifyToken, requireStudent, async (req, res) => {
                 id: exam._id,
                 title: exam.title,
                 description: exam.description,
-                timeLimit: exam.timeLimit
+                timeLimit: exam.timeLimit,
+                subjectName: exam.subjectId?.name || exam.title
             },
             sections,
             questions: questions.map(q => ({

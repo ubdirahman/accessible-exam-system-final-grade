@@ -4,6 +4,7 @@ const Student = require('../models/Student');
 const Admin = require('../models/Admin');
 const Teacher = require('../models/Teacher');
 const Exam = require('../models/Exam');
+const { buildStudentExamQueue } = require('../utils/studentExamQueue');
 
 const router = express.Router();
 
@@ -24,6 +25,7 @@ router.post('/student-login', async (req, res) => {
 
         let exam;
         let codeEntry;
+        let queue = null;
 
         if (examCode) {
             // Find specific exam with valid code
@@ -62,20 +64,15 @@ router.post('/student-login', async (req, res) => {
                 codeEntry.studentId = studentId;
                 await exam.save();
             }
+
+            queue = await buildStudentExamQueue(student, exam._id);
         } else {
-            // Auto-find most recent active exam strictly for the student's class (and faculty if present)
             if (!student.classId) {
                 return res.status(404).json({ message: 'No class assigned to your account. Contact admin.' });
             }
 
-            const query = { active: true, classId: student.classId };
-            if (student.facultyId) query.facultyId = student.facultyId;
-
-            exam = await Exam.findOne(query).sort({ createdAt: -1 });
-
-            if (!exam) {
-                return res.status(404).json({ message: 'No active exams found for your class.' });
-            }
+            queue = await buildStudentExamQueue(student);
+            exam = queue.currentExam;
         }
 
         // Add exam code to student record
@@ -90,7 +87,7 @@ router.post('/student-login', async (req, res) => {
                 id: student._id,
                 studentId: student.studentId,
                 role: 'student',
-                examId: exam._id,
+                examId: exam?._id || exam?.id || null,
                 facultyId: student.facultyId || null
             },
             process.env.JWT_SECRET,
@@ -105,12 +102,16 @@ router.post('/student-login', async (req, res) => {
                 studentId: student.studentId,
                 accessibilitySettings: student.accessibilitySettings
             },
-            exam: {
-                id: exam._id,
-                title: exam.title,
-                description: exam.description,
-                timeLimit: exam.timeLimit
-            }
+            exam: exam
+                ? {
+                    id: exam._id || exam.id,
+                    title: exam.title,
+                    description: exam.description,
+                    timeLimit: exam.timeLimit,
+                    subjectName: exam.subjectId?.name || exam.subjectName || exam.title
+                }
+                : null,
+            queue
         });
     } catch (error) {
         console.error('Student login error:', error);

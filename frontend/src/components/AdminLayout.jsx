@@ -52,6 +52,7 @@ export default function AdminLayout({ children }) {
                 { path: '/admin/teachers', label: 'Teachers', iconClass: 'fa-solid fa-chalkboard-user' },
                 { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
                 { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
+                { path: '/admin/result-exam', label: 'Result Exam', iconClass: 'fa-solid fa-table-list' },
                 { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
             ];
         }
@@ -63,6 +64,7 @@ export default function AdminLayout({ children }) {
             { path: '/admin/teachers', label: 'Teachers', iconClass: 'fa-solid fa-chalkboard-user' },
             { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
             { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
+            { path: '/admin/result-exam', label: 'Result Exam', iconClass: 'fa-solid fa-table-list' },
             { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
         ];
     })();
@@ -126,4 +128,3 @@ export default function AdminLayout({ children }) {
         </div>
     );
 }
-

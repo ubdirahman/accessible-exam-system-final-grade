@@ -23,10 +23,13 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         setTranscript(text);
 
         const commands = commandMapRef.current;
+        const allowFastOptionMatch = typeof commands.__shouldMatchOption__ === 'function'
+            ? commands.__shouldMatchOption__(text)
+            : true;
 
         // Fast MCQ letter capture even inside longer phrases ("answer is b", "waa c")
         const optionMatchFast = text.match(/\b([a-d])\b/);
-        if (optionMatchFast && commands['option']) {
+        if (allowFastOptionMatch && optionMatchFast && commands['option']) {
             const letter = optionMatchFast[1].toUpperCase();
             setLastCommand(`Option ${letter}`);
             commands['option'](letter);
@@ -34,11 +37,20 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         }
 
         // 1. Data Extraction Patterns (Student ID, Exam Code)
-        if (text.includes('my id is')) {
-            const id = text.split('my id is')[1].trim().replace(/\s/g, '').toUpperCase();
-            if (commands['set student id']) {
+        if (
+            text.includes('my id is') ||
+            text.includes('student id is') ||
+            text.includes('i d is') ||
+            text.includes('id waa') ||
+            text.includes('aqoonsi waa')
+        ) {
+            const idMatch = text.match(
+                /(?:my\s+student\s+id|student\s+id|my\s+id|i\s*d|id|aqoonsi(?:ga(?:ygu)?)?)\s*(?:is|waa)\s+(.+)/
+            );
+            const id = idMatch ? idMatch[1].trim() : '';
+            if (id && commands['set student id']) {
                 commands['set student id'](id);
-                setLastCommand(`ID: ${id}`);
+                setLastCommand(`ID: ${id.toUpperCase().replace(/\s+/g, '')}`);
                 return true;
             }
         }
@@ -55,6 +67,7 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         // 2. Intent-Based Matching (Variations)
         for (const [pattern, handler] of Object.entries(commands)) {
+            if (pattern.startsWith('__')) continue;
             const patternLower = pattern.toLowerCase();
 
             // Safety: Short commands (like 'a', 'no') must be exact matches to avoid false positives in longer sentences
@@ -93,6 +106,7 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
     const lastExecutedRef = useRef(0);
 
     const startListening = useCallback(() => {
+        if (!enabled) return;
         if (recognitionRef.current) return; // already listening
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
             console.warn('Speech Recognition not supported');
@@ -150,7 +164,7 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         recognition.start();
         recognitionRef.current = recognition;
         setIsListening(true);
-    }, [processCommand]);
+    }, [enabled, processCommand]);
 
     const stopListening = useCallback(() => {
         if (recognitionRef.current) {
@@ -179,6 +193,12 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
             }
         };
     }, []);
+
+    useEffect(() => {
+        if (!enabled) {
+            stopListening();
+        }
+    }, [enabled, stopListening]);
 
     return {
         isListening,

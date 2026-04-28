@@ -190,15 +190,15 @@ export default function ExamCreator() {
 
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
-            const payload = { 
-                title, 
-                description, 
-                timeLimit, 
-                sections, 
-                active: isTeacher ? active : active, // maintain active if edit
-                facultyId, 
-                classId: selectedClass || null, 
-                subjectId: selectedSubject || null 
+            const payload = {
+                title,
+                description,
+                timeLimit,
+                sections,
+                facultyId,
+                classId: selectedClass || null,
+                subjectId: selectedSubject || null,
+                ...(isTeacher ? {} : { active })
             };
 
             if (isEdit) {
@@ -280,17 +280,19 @@ export default function ExamCreator() {
                             <label>Description</label>
                             <textarea className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description of the exam" rows={2} />
                         </div>
-                        <div className="grid-2 gap-md">
+                        <div className="grid-2 gap-md" style={{ gridTemplateColumns: isTeacher ? '1fr' : undefined }}>
                             <div className="input-group">
                                 <label>Time Limit (minutes)</label>
                                 <input className="input" type="number" value={timeLimit} onChange={e => setTimeLimit(Number(e.target.value))} min={1} max={600} required />
                             </div>
-                            <div className="input-group flex items-end">
-                                <label className="flex items-center gap-sm cursor-pointer" style={{ marginBottom: 12 }}>
-                                    <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
-                                    <span>Active Exam</span>
-                                </label>
-                            </div>
+                            {!isTeacher && (
+                                <div className="input-group flex items-end">
+                                    <label className="flex items-center gap-sm cursor-pointer" style={{ marginBottom: 12 }}>
+                                        <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
+                                        <span>Active Exam</span>
+                                    </label>
+                                </div>
+                            )}
                         </div>
                     </div>
 
