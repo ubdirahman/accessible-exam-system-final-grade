@@ -513,7 +513,7 @@ export default function LoginPage() {
     }, [lastIdActivityAt, loading, mode, promptSilenceStudentIdConfirmation, silenceConfirmedId, studentId, voiceStep]);
 
     return (
-        <div className="page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="page login-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {mode === 'student' && (
                 <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
                     {studentStatus}
@@ -522,7 +522,7 @@ export default function LoginPage() {
             {/* Voice Indicator */}
             {mode === 'student' && (
                 <>
-                    <div className={`voice-indicator ${isListening ? 'listening' : ''}`}
+                    <div className={`voice-indicator student-voice-indicator ${isListening ? 'listening' : ''}`}
                         style={{
                             position: 'fixed',
                             top: 'clamp(80px, 15vh, 120px)',
@@ -541,15 +541,15 @@ export default function LoginPage() {
                     </div>
                     {/* live raw transcript */}
                     {isListening && transcript && voiceStep === 'LISTENING_ID' && (
-                        <div className="transcript" style={{position:'fixed', top:'clamp(120px,18vh,160px)', left:'50%', transform:'translateX(-50%)', background:'rgba(255,255,255,0.9)', padding:'4px 8px', borderRadius:'4px', fontSize:'var(--font-size-sm)'}}>
+                        <div className="transcript student-login-transcript" style={{ position: 'fixed', top: 'clamp(120px,18vh,160px)', left: '50%', transform: 'translateX(-50%)', fontSize: 'var(--font-size-sm)' }}>
                             Heard: {transcript}
                         </div>
                     )}
                 </>
             )}
-            <div style={{ width: '100%', maxWidth: 520 }}>
+            <div className="login-shell" style={{ width: '100%', maxWidth: 520 }}>
                 {/* Header */}
-                <div className="text-center" style={{ marginBottom: 40 }}>
+                <div className="text-center login-header" style={{ marginBottom: 40 }}>
                     <div style={{ fontSize: 48, marginBottom: 12 }} aria-hidden="true">
                         <i className="fa-solid fa-universal-access"></i>
                     </div>
@@ -562,7 +562,7 @@ export default function LoginPage() {
                 </div>
 
                 {/* Role Tabs */}
-                <div className="section-tabs" style={{ justifyContent: 'center', marginBottom: 24 }}>
+                <div className="section-tabs login-role-tabs" style={{ justifyContent: 'center', marginBottom: 24 }}>
                     <button
                         className={`section-tab ${mode === 'student' ? 'active' : ''}`}
                         onClick={() => { setMode('student'); setError(''); }}
@@ -587,7 +587,7 @@ export default function LoginPage() {
                 </div>
 
                 {/* Login Card */}
-                <div className="card">
+                <div className="card login-card">
                     {error && (
                         <div className="badge badge-danger" style={{ marginBottom: 16, width: '100%', justifyContent: 'center', padding: 14 }} role="alert">
                             <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> {error}
@@ -597,7 +597,7 @@ export default function LoginPage() {
                     {mode === 'student' ? (
                         <form onSubmit={handleStudentLogin}>
                             <div
-                                className="badge badge-info"
+                                className="badge badge-info student-login-status"
                                 style={{ marginBottom: 16, width: '100%', justifyContent: 'center', padding: 14, textAlign: 'center', lineHeight: 1.5 }}
                                 role="status"
                                 aria-live="polite"
@@ -630,18 +630,14 @@ export default function LoginPage() {
                                     required
                                     autoFocus
                                     aria-required="true"
-                                    aria-describedby="student-id-help"
                                     style={{
                                         borderColor: voiceStep === 'CONFIRM_ID' ? 'var(--accent-primary)' : undefined,
                                         boxShadow: voiceStep === 'CONFIRM_ID' ? '0 0 0 4px rgba(37, 99, 235, 0.1)' : undefined
                                     }}
                                 />
-                                <p id="student-id-help" className="text-muted" style={{ marginTop: 10 }}>
-                                    Blind-friendly input: guided entry starts automatically. Say one letter or one number at a time, for example C, 1, 2, 2, 0, 1, 9, 9, and each character will be written then read back to you.
-                                </p>
                             </div>
 
-                            <div className="flex gap-sm" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
+                            <div className="flex gap-sm student-login-actions" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
                                 <button
                                     type="button"
                                     className="btn btn-secondary btn-sm"
@@ -670,7 +666,7 @@ export default function LoginPage() {
                                 </button>
                             </div>
 
-                            <button className="btn btn-primary btn-lg" style={{ width: '100%' }} type="submit" disabled={loading}>
+                            <button className="btn btn-primary btn-lg student-login-submit" style={{ width: '100%' }} type="submit" disabled={loading}>
                                 {loading
                                     ? (<><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>)
                                     : (voiceStep === 'CONFIRM_ID'
@@ -754,16 +750,6 @@ export default function LoginPage() {
                         </form>
                     )}
 
-                    <div className="text-center mt-lg text-muted" style={{ fontSize: 'var(--font-size-sm)' }}>
-                        {mode === 'student'
-                            ? (
-                                <>
-                                    <i className="fa-solid fa-lightbulb" aria-hidden="true"></i> Tip: say "Guided Mode" for the easiest step-by-step entry, or say "Repeat ID", "Delete Last", "Clear ID", "Use Last ID", or "Continue".
-                                </>
-                            )
-                            : (<><i className="fa-solid fa-lightbulb" aria-hidden="true"></i></>)
-                        }
-                    </div>
                 </div>
             </div>
         </div>

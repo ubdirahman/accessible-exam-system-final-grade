@@ -1431,3 +1431,91 @@ tr:hover td {
   gap: 16px;
   flex-wrap: wrap;
 }
+
+/* ======================================================
+   Login page refinements
+   ====================================================== */
+.login-page {
+  background: #f4f6f9;
+  animation: none;
+}
+
+.login-role-tabs .section-tab {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.login-role-tabs .section-tab.active {
+  background: #e8eef9;
+  border-color: #0b3d91;
+  color: #0b3d91;
+}
+
+.login-card {
+  border-color: #d7dee8;
+  box-shadow: none;
+}
+
+.login-card:hover {
+  border-color: #d7dee8;
+  box-shadow: none;
+}
+
+.login-page .input:focus {
+  border-color: #0b3d91;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.12);
+}
+
+.student-login-status {
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #d7dee8;
+  border-radius: 10px;
+}
+
+.student-voice-indicator {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.student-voice-indicator.listening {
+  border-color: #0b3d91;
+  box-shadow: none;
+  transform: translateX(-50%);
+  animation: none;
+}
+
+.student-voice-indicator .voice-dot {
+  background: #94a3b8;
+}
+
+.student-voice-indicator.listening .voice-dot {
+  background: #0b3d91;
+  animation: none;
+}
+
+.student-voice-indicator.listening .voice-dot::after {
+  display: none;
+}
+
+.student-login-transcript {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 8px;
+  box-shadow: none;
+}
+
+.login-page .btn-primary {
+  background: #0b3d91;
+  box-shadow: none;
+}
+
+.login-page .btn-primary:hover {
+  background: #082d6b;
+  box-shadow: none;
+  transform: none;
+}

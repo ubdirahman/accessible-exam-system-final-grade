@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import { useAutoUpdate } from '../hooks/useAutoUpdate';
 
 export default function AdminLayout({ children }) {
     const { user, logout } = useAuth();
@@ -9,21 +10,21 @@ export default function AdminLayout({ children }) {
     const navigate = useNavigate();
     const [myClass, setMyClass] = useState(null);
 
-    useEffect(() => {
+    const fetchClass = useCallback(async () => {
         if (user?.role === 'teacher' && user?.classId) {
-            const fetchClass = async () => {
-                try {
-                    const res = await api.get('/classes/my');
-                    if (res.data && res.data.length > 0) {
-                        setMyClass(res.data[0]);
-                    }
-                } catch (err) {
-                    console.error('Error fetching teacher class:', err);
+            try {
+                const res = await api.get('/classes/my');
+                if (res.data && res.data.length > 0) {
+                    setMyClass(res.data[0]);
                 }
-            };
-            fetchClass();
+            } catch (err) {
+                console.error('Error fetching teacher class:', err);
+            }
         }
     }, [user]);
+
+    // Cusboonaysiin toos ah (Automatic Update) 30-kii ilbiriqsiba mar
+    useAutoUpdate(fetchClass, 30000);
 
     const handleLogout = () => {
         logout();
@@ -72,7 +73,17 @@ export default function AdminLayout({ children }) {
     return (
         <div className="page admin-shell">
             {/* Sidebar on the left */}
-            <aside className="admin-sidebar">
+            <aside 
+                className="admin-sidebar"
+                style={user?.role === 'super_admin' ? {
+                    background: 'linear-gradient(135deg, rgba(0, 102, 204, 0.8) 0%, rgba(0, 204, 255, 0.4) 100%)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    borderRight: '1px solid rgba(255, 255, 255, 0.3)',
+                    boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.15)',
+                    transition: 'all 0.4s ease'
+                } : {}}
+            >
                 <div className="navbar-brand sidebar-brand">
                     <span className="icon" aria-hidden="true">
                         <i className={brandIcon}></i>
