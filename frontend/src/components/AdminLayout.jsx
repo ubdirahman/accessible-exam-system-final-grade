@@ -54,6 +54,7 @@ export default function AdminLayout({ children }) {
                 { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
                 { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
                 { path: '/admin/result-exam', label: 'Result Exam', iconClass: 'fa-solid fa-table-list' },
+                { path: '/admin/recordings', label: 'Recordings', iconClass: 'fa-solid fa-microphone-lines' },
                 { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
             ];
         }
@@ -66,6 +67,7 @@ export default function AdminLayout({ children }) {
             { path: '/admin/classes', label: 'Class', iconClass: 'fa-solid fa-school' },
             { path: '/admin/semesters', label: 'Semester', iconClass: 'fa-solid fa-calendar' },
             { path: '/admin/result-exam', label: 'Result Exam', iconClass: 'fa-solid fa-table-list' },
+            { path: '/admin/recordings', label: 'Recordings', iconClass: 'fa-solid fa-microphone-lines' },
             { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
         ];
     })();
@@ -73,17 +75,7 @@ export default function AdminLayout({ children }) {
     return (
         <div className="page admin-shell">
             {/* Sidebar on the left */}
-            <aside 
-                className="admin-sidebar"
-                style={user?.role === 'super_admin' ? {
-                    background: 'linear-gradient(135deg, rgba(0, 102, 204, 0.8) 0%, rgba(0, 204, 255, 0.4) 100%)',
-                    backdropFilter: 'blur(12px)',
-                    WebkitBackdropFilter: 'blur(12px)',
-                    borderRight: '1px solid rgba(255, 255, 255, 0.3)',
-                    boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.15)',
-                    transition: 'all 0.4s ease'
-                } : {}}
-            >
+            <aside className="admin-sidebar">
                 <div className="navbar-brand sidebar-brand">
                     <span className="icon" aria-hidden="true">
                         <i className={brandIcon}></i>

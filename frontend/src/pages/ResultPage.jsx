@@ -31,8 +31,8 @@ export default function ResultPage() {
         .filter((entry) => entry.status !== 'completed')
         .map((entry) => entry.subjectName);
 
-    const handleLogout = useCallback(() => {
-        resetExamSession();
+    const handleLogout = useCallback(async () => {
+        await resetExamSession({ recordingStatus: 'stopped' });
         logout();
         navigate('/');
     }, [logout, navigate, resetExamSession]);

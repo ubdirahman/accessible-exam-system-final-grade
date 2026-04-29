@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useExam } from '../context/ExamContext';
 import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
@@ -36,6 +37,7 @@ export default function LoginPage() {
     const studentInputRef = useRef(null);
 
     const { login } = useAuth();
+    const { ensureExamRecording } = useExam();
     const navigate = useNavigate();
     const { speak } = useTTS();
 
@@ -328,10 +330,19 @@ export default function LoginPage() {
         try {
             const res = await api.post('/student-login', { studentId: normalizedId });
             localStorage.setItem(LAST_STUDENT_ID_KEY, normalizedId);
-            login(
-                { ...res.data.student, role: 'student', examId: res.data.exam?.id || null },
-                res.data.token
-            );
+            const nextUser = { ...res.data.student, role: 'student', examId: res.data.exam?.id || null };
+            login(nextUser, res.data.token);
+
+            if (res.data.exam?.id) {
+                await ensureExamRecording({
+                    examId: res.data.exam.id,
+                    examTitle: res.data.exam.title,
+                    subjectName: res.data.exam.subjectName,
+                    studentId: res.data.student?.studentId,
+                    studentName: res.data.student?.name
+                });
+            }
+
             navigate('/student/dashboard');
         } catch (err) {
             const msg = err.response?.data?.message || 'Login failed. Please check your I D.';
@@ -346,7 +357,7 @@ export default function LoginPage() {
         } finally {
             setLoading(false);
         }
-    }, [focusStudentInput, login, markStudentIdActivity, navigate, speakAndListen]);
+    }, [ensureExamRecording, focusStudentInput, login, markStudentIdActivity, navigate, speakAndListen]);
 
     const handleStudentLogin = (e) => {
         e.preventDefault();

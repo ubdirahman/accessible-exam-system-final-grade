@@ -21,7 +21,7 @@ function getLatestCompletedExam(exams = []) {
 
 export default function StudentDashboard() {
     const { user, logout } = useAuth();
-    const { startExam, resetExamSession } = useExam();
+    const { startExam, resetExamSession, ensureExamRecording, recordingState } = useExam();
     const { speak } = useTTS();
     const navigate = useNavigate();
 
@@ -40,8 +40,8 @@ export default function StudentDashboard() {
     const remainingAfterCurrent = exams.filter((exam) => exam.status === 'remaining');
     const latestCompletedExam = getLatestCompletedExam(exams);
 
-    const handleLogout = useCallback(() => {
-        resetExamSession();
+    const handleLogout = useCallback(async () => {
+        await resetExamSession({ recordingStatus: 'stopped' });
         logout();
         navigate('/');
     }, [logout, navigate, resetExamSession]);
@@ -183,6 +183,13 @@ export default function StudentDashboard() {
         }
 
         try {
+            await ensureExamRecording({
+                examId: currentExam.id,
+                examTitle: currentExam.title,
+                subjectName: currentExam.subjectName,
+                studentId: user?.studentId,
+                studentName: user?.name
+            });
             const res = await api.post(`/exams/${currentExam.id}/start`);
             startExam(res.data.exam, res.data.sections, res.data.questions);
             navigate('/student/exam');
@@ -292,6 +299,20 @@ export default function StudentDashboard() {
         setHasSpokenIntro(true);
     }, [currentExam, examData, hasSpokenIntro, loading, queueData, speakDashboardSummary]);
 
+    useEffect(() => {
+        if (!currentExam?.id) return;
+
+        ensureExamRecording({
+            examId: currentExam.id,
+            examTitle: currentExam.title,
+            subjectName: currentExam.subjectName,
+            studentId: user?.studentId,
+            studentName: user?.name
+        }).catch((error) => {
+            console.error('Recording setup failed on dashboard:', error);
+        });
+    }, [currentExam?.id, currentExam?.subjectName, currentExam?.title, ensureExamRecording, user?.name, user?.studentId]);
+
     if (loading) {
         return (
             <div className="loading-page">
@@ -312,6 +333,15 @@ export default function StudentDashboard() {
                     <div className="navbar-actions">
                         <span className={`badge ${isListening ? 'badge-success' : 'badge-info'}`}>
                             <i className="fa-solid fa-ear-listen" aria-hidden="true"></i> {isListening ? 'Voice Ready' : 'Voice Off'}
+                        </span>
+                        <span className={`badge ${
+                            recordingState.status === 'recording'
+                                ? 'badge-success'
+                                : recordingState.status === 'error'
+                                    ? 'badge-danger'
+                                    : 'badge-warning'
+                        }`}>
+                            <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> {recordingState.status === 'recording' ? 'Recording On' : recordingState.status === 'error' ? 'Recording Error' : 'Recording Standby'}
                         </span>
                         <span className="badge badge-info"><i className="fa-solid fa-user-graduate" aria-hidden="true"></i> {user?.name}</span>
                         <button className="btn btn-secondary btn-sm" onClick={handleLogout}>

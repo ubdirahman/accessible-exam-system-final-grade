@@ -21,6 +21,7 @@ import TeacherExamResponses from './pages/TeacherExamResponses';
 import ExamCreator from './pages/ExamCreator';
 import ReportsPage from './pages/ReportsPage';
 import AdminResultExam from './pages/AdminResultExam';
+import AdminRecordings from './pages/AdminRecordings';
 
 function AppRoutes() {
     const { isAuthenticated, user, loading } = useAuth();
@@ -125,6 +126,11 @@ function AppRoutes() {
             <Route path="/admin/result-exam" element={
                 <ProtectedRoute roles={['admin', 'super_admin']}>
                     <AdminLayout><AdminResultExam /></AdminLayout>
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/recordings" element={
+                <ProtectedRoute roles={['admin', 'super_admin']}>
+                    <AdminLayout><AdminRecordings /></AdminLayout>
                 </ProtectedRoute>
             } />
             <Route path="/admin/exams/:id/responses" element={

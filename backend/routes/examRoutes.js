@@ -8,9 +8,11 @@ const Question = require('../models/Question');
 const Response = require('../models/Response');
 const Result = require('../models/Result');
 const ActivityLog = require('../models/ActivityLog');
+const ExamRecording = require('../models/ExamRecording');
 const Student = require('../models/Student');
 const axios = require('axios');
 const { buildStudentExamQueue } = require('../utils/studentExamQueue');
+const { deleteRecordingFile } = require('../utils/examRecordingStorage');
 
 const router = express.Router();
 
@@ -579,11 +581,18 @@ router.delete('/:id', verifyToken, requireAdminOrTeacher, async (req, res) => {
         if (req.user.role === 'admin' && exam.facultyId && exam.facultyId.toString() !== String(req.user.facultyId)) {
             return res.status(403).json({ message: 'Access denied for this faculty.' });
         }
+        const recordings = await ExamRecording.find({ examId }).select('filePath');
+        recordings.forEach((recording) => {
+            if (recording.filePath) {
+                deleteRecordingFile(recording.filePath);
+            }
+        });
         await Question.deleteMany({ examId });
         await Section.deleteMany({ examId });
         await Response.deleteMany({ examId });
         await ActivityLog.deleteMany({ examId });
         await Result.deleteMany({ examId });
+        await ExamRecording.deleteMany({ examId });
         await Exam.findByIdAndDelete(examId);
         res.json({ message: 'Exam and related data deleted.' });
     } catch (error) {

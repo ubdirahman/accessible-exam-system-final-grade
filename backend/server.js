@@ -27,6 +27,7 @@ app.use('/api', require('./routes/authRoutes'));
 app.use('/api/exams', require('./routes/examRoutes'));
 app.use('/api/logs', require('./routes/logRoutes'));
 app.use('/api/results', require('./routes/resultRoutes'));
+app.use('/api/recordings', require('./routes/recordingRoutes'));
 app.use('/api/semesters', require('./routes/semesterRoutes'));
 app.use('/api/teachers', require('./routes/teacherRoutes'));  // new teacher management endpoints
 app.use('/api/faculties', require('./routes/facultyRoutes'));
