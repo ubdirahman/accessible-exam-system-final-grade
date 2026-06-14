@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
+import useConfirmDialog from '../hooks/useConfirmDialog';
+
+// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
+const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
 
 export default function AdminTeachers() {
     const { user } = useAuth();
@@ -17,6 +23,11 @@ export default function AdminTeachers() {
     const [error, setError] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', phone: '', address: '', active: true });
+    const [classSearchTerm, setClassSearchTerm] = useState('');
+    const [teacherSearchTerm, setTeacherSearchTerm] = useState('');
+    const [touched, setTouched] = useState({});
+
+    const { confirmDialog, askConfirm } = useConfirmDialog();
 
     const loadFaculties = async () => {
         if (!isSuper) return;
@@ -56,9 +67,7 @@ export default function AdminTeachers() {
         }
     };
 
-    useEffect(() => {
-        loadFaculties();
-    }, []);
+    useEffect(() => { loadFaculties(); }, []);
 
     useEffect(() => {
         const fid = isSuper ? selectedFaculty : user?.facultyId;
@@ -69,8 +78,20 @@ export default function AdminTeachers() {
         if (selectedClass) loadTeachers(selectedClass._id);
     }, [selectedClass]);
 
+    // Form validation
+    const formErrors = {
+        name: !form.name?.trim(),
+        email: !form.email?.trim(),
+        phone: !form.phone?.trim(),
+        password: !form.password?.trim()
+    };
+    const showError = (field) => touched[field] && formErrors[field];
+    const hasErrors = Object.values(formErrors).some(Boolean);
+
     const addTeacher = async (e) => {
         e.preventDefault();
+        setTouched({ name: true, email: true, phone: true, password: true });
+        if (hasErrors) return;
         setError('');
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
@@ -78,20 +99,30 @@ export default function AdminTeachers() {
             await api.post('/teachers', payload);
             setForm({ name: '', email: '', phone: '', address: '', password: '' });
             setShowForm(false);
+            setTouched({});
             loadTeachers(selectedClass._id);
         } catch (err) {
             setError(err.response?.data?.message || 'Error creating teacher.');
         }
     };
 
-    const deleteTeacher = async (id) => {
-        if (!window.confirm('Delete this teacher?')) return;
+    const deleteTeacher = async (id, name) => {
+        const confirmed = await askConfirm({
+            title: 'Delete Teacher?',
+            message: `"${name}" will be permanently removed from this class.`,
+            confirmText: 'Yes, Delete',
+            type: 'danger'
+        });
+        if (!confirmed) return;
+
+        // Optimistic update
+        setTeachers(prev => prev.filter(t => t._id !== id));
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
             await api.delete(`/teachers/${id}`, { params: { facultyId } });
-            loadTeachers(selectedClass._id);
         } catch (err) {
             setError('Error deleting teacher.');
+            loadTeachers(selectedClass._id); // Restore on error
         }
     };
 
@@ -101,12 +132,10 @@ export default function AdminTeachers() {
     };
 
     const saveEdit = async () => {
+        if (!editForm.name?.trim()) return;
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
-            await api.put(`/teachers/${editingId}`, {
-                ...editForm,
-                facultyId
-            });
+            await api.put(`/teachers/${editingId}`, { ...editForm, facultyId });
             setEditingId(null);
             loadTeachers(selectedClass._id);
         } catch (err) {
@@ -114,13 +143,17 @@ export default function AdminTeachers() {
         }
     };
 
-    if (loading && !selectedClass) return <div className="spinner"></div>;
+    const filteredClasses = classes.filter((classroom) => matchesSearchQuery(classSearchTerm, classroom.name, classroom.code));
+    const filteredTeachers = teachers.filter((teacher) => matchesSearchQuery(teacherSearchTerm, teacher.name, teacher.email, teacher.phone, teacher.address, teacher._id));
+
+    if (loading && !selectedClass) return <div className="spinner" />;
 
     if (selectedClass) {
         return (
             <div className="fade-in">
+                {confirmDialog}
                 <div className="back-link" onClick={() => setSelectedClass(null)}>
-                    <i className="fa-solid fa-arrow-left"></i> Back to Classes
+                    <i className="fa-solid fa-arrow-left" /> Back to Classes
                 </div>
 
                 <div className="detail-header">
@@ -129,8 +162,8 @@ export default function AdminTeachers() {
                             <h1 style={{ fontWeight: 800, marginBottom: 4 }}>Teachers: {selectedClass.name}</h1>
                             <div className="class-code">Class Code: {selectedClass.code || 'N/A'}</div>
                         </div>
-                        <button className={`btn ${showForm ? 'btn-secondary' : 'btn-primary'}`} onClick={() => setShowForm(!showForm)}>
-                            {showForm ? 'Cancel' : <><i className="fa-solid fa-plus"></i> Add Teacher</>}
+                        <button className={`btn ${showForm ? 'btn-secondary' : 'btn-primary'}`} onClick={() => { setShowForm(!showForm); setTouched({}); }}>
+                            {showForm ? 'Cancel' : <><i className="fa-solid fa-plus" /> Add Teacher</>}
                         </button>
                     </div>
                 </div>
@@ -141,34 +174,70 @@ export default function AdminTeachers() {
                         <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={addTeacher}>
                             <div className="input-group">
                                 <label>Full Name</label>
-                                <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+                                <input
+                                    className={`input${showError('name') ? ' input-error' : ''}`}
+                                    value={form.name}
+                                    onChange={e => setForm({ ...form, name: nameOnly(e.target.value) })}
+                                    onBlur={() => setTouched(p => ({ ...p, name: true }))}
+                                    placeholder="e.g. Ahmed Ali"
+                                />
+                                {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                             </div>
                             <div className="input-group">
                                 <label>Email Address</label>
-                                <input className="input" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+                                <input
+                                    className={`input${showError('email') ? ' input-error' : ''}`}
+                                    type="email"
+                                    value={form.email}
+                                    onChange={e => setForm({ ...form, email: e.target.value })}
+                                    onBlur={() => setTouched(p => ({ ...p, email: true }))}
+                                    placeholder="teacher@faculty.edu"
+                                />
+                                {showError('email') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                             </div>
                             <div className="input-group">
                                 <label>Phone Number</label>
-                                <input className="input" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} required />
+                                <input
+                                    className={`input${showError('phone') ? ' input-error' : ''}`}
+                                    value={form.phone}
+                                    onChange={e => setForm({ ...form, phone: e.target.value })}
+                                    onBlur={() => setTouched(p => ({ ...p, phone: true }))}
+                                    placeholder="e.g. +252 61 234 5678"
+                                />
+                                {showError('phone') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                             </div>
                             <div className="input-group">
                                 <label>Password</label>
-                                <input className="input" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
+                                <input
+                                    className={`input${showError('password') ? ' input-error' : ''}`}
+                                    type="password"
+                                    value={form.password}
+                                    onChange={e => setForm({ ...form, password: e.target.value })}
+                                    onBlur={() => setTouched(p => ({ ...p, password: true }))}
+                                    placeholder="Set login password"
+                                />
+                                {showError('password') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                             </div>
                             <div className="input-group">
                                 <label>Residential Address</label>
-                                <input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
+                                <input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="Optional" />
                             </div>
                             <button className="btn btn-success" type="submit" style={{ alignSelf: 'end' }}>Register Teacher</button>
                         </form>
+                        {error && <div className="badge badge-danger mt-sm">{error}</div>}
                     </div>
                 )}
 
                 <div className="card">
+                    <div className="mb-sm">
+                        <SearchInput value={teacherSearchTerm} onChange={setTeacherSearchTerm} placeholder="Search by teacher name, email, phone, address, or ID" />
+                    </div>
                     {teacherLoading ? (
-                        <div className="spinner"></div>
-                    ) : teachers.length === 0 ? (
-                        <div className="text-center py-lg text-muted">No teachers registered for this class.</div>
+                        <div className="spinner" />
+                    ) : filteredTeachers.length === 0 ? (
+                        <div className="text-center py-lg text-muted">
+                            {teachers.length === 0 ? 'No teachers registered for this class.' : 'No teachers match your search.'}
+                        </div>
                     ) : (
                         <div className="table-wrapper" style={{ padding: 0 }}>
                             <table>
@@ -181,11 +250,11 @@ export default function AdminTeachers() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {teachers.map(t => (
+                                    {filteredTeachers.map(t => (
                                         <tr key={t._id}>
                                             <td>
                                                 {editingId === t._id ? (
-                                                    <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                                                    <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: nameOnly(e.target.value) })} />
                                                 ) : (
                                                     <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</div>
                                                 )}
@@ -221,10 +290,10 @@ export default function AdminTeachers() {
                                                     ) : (
                                                         <>
                                                             <button className="btn btn-sm btn-secondary" onClick={() => startEdit(t)} title="Edit">
-                                                                <i className="fa-solid fa-pen-to-square"></i>
+                                                                <i className="fa-solid fa-pen-to-square" />
                                                             </button>
-                                                            <button className="btn btn-sm btn-danger" onClick={() => deleteTeacher(t._id)} title="Delete">
-                                                                <i className="fa-solid fa-trash"></i>
+                                                            <button className="btn btn-sm btn-danger" onClick={() => deleteTeacher(t._id, t.name)} title="Delete">
+                                                                <i className="fa-solid fa-trash" />
                                                             </button>
                                                         </>
                                                     )}
@@ -244,6 +313,7 @@ export default function AdminTeachers() {
 
     return (
         <div className="fade-in">
+            {confirmDialog}
             <div className="flex items-center justify-between mb-lg">
                 <div>
                     <h1 style={{ fontWeight: 800 }}>Teacher Management</h1>
@@ -262,14 +332,18 @@ export default function AdminTeachers() {
             )}
 
             {loading ? (
-                <div className="spinner"></div>
+                <div className="spinner" />
             ) : classes.length === 0 ? (
                 <div className="card text-center py-xl">
                     <div className="text-muted">No classes found. Please create classes first to assign teachers.</div>
                 </div>
             ) : (
-                <div className="class-grid">
-                    {classes.map(c => (
+                <>
+                    <div className="card mb-md">
+                        <SearchInput value={classSearchTerm} onChange={setClassSearchTerm} placeholder="Search classes by name or code" />
+                    </div>
+                    <div className="class-grid">
+                    {filteredClasses.map(c => (
                         <div key={c._id} className="class-card teacher-class-card" onClick={() => setSelectedClass(c)}>
                             <div className="class-badge">Faculty Staff</div>
                             <div>
@@ -277,12 +351,17 @@ export default function AdminTeachers() {
                                 <div className="class-code">{c.code || 'No Code'}</div>
                             </div>
                             <div className="class-info">
-                                <i className="fa-solid fa-user-tie"></i>
-                                Manage Class Teachers
+                                <i className="fa-solid fa-user-tie" /> Manage Class Teachers
                             </div>
                         </div>
                     ))}
-                </div>
+                    </div>
+                    {filteredClasses.length === 0 && (
+                        <div className="card text-center py-xl">
+                            <div className="text-muted">No classes match your search.</div>
+                        </div>
+                    )}
+                </>
             )}
             {error && <div className="badge badge-danger mt-md">{error}</div>}
         </div>

@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import api from '../api/axios';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import { broadcastResultExamSync } from '../utils/resultExamSync';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
 
 function isSameResponseSlot(response, studentId, questionId) {
     return response?.studentId === studentId
@@ -21,6 +23,8 @@ export default function TeacherExamResponses() {
     const [selectedResp, setSelectedResp] = useState(null);
     const [selectedQ, setSelectedQ] = useState(null);
     const [manualScore, setManualScore] = useState('');
+    const [studentSearchTerm, setStudentSearchTerm] = useState('');
+    const [questionSearchTerm, setQuestionSearchTerm] = useState('');
 
     const selectResponse = useCallback((student, question, resp) => {
         setSelectedStudent(student);
@@ -164,6 +168,16 @@ export default function TeacherExamResponses() {
         : 0;
     const startIndex = currentPage * pageSize;
     const pageQuestions = data.questions.slice(startIndex, startIndex + pageSize);
+    const filteredPageQuestions = pageQuestions.filter((question) => {
+        const response = activeResponses.find((item) => item.questionId && item.questionId.toString() === question._id.toString());
+        return matchesSearchQuery(
+            questionSearchTerm,
+            question.questionText,
+            response?.selectedAnswer,
+            response?.score,
+            response?.isCorrect == null ? 'ungraded' : response.isCorrect ? 'correct' : 'incorrect'
+        );
+    });
 
     return (
         <div>
@@ -173,6 +187,13 @@ export default function TeacherExamResponses() {
             ) : (
                 <div className="flex flex-col gap-lg">
                     <div className="card" style={{ padding: 20 }}>
+                        <div className="mb-md">
+                            <SearchInput
+                                value={studentSearchTerm}
+                                onChange={setStudentSearchTerm}
+                                placeholder="Search students by name or ID"
+                            />
+                        </div>
                         <div className="grid-2 gap-lg" style={{ alignItems: 'start' }}>
                             {(() => {
                                 const openEndedIds = new Set(
@@ -202,10 +223,12 @@ export default function TeacherExamResponses() {
                                             {title}
                                         </div>
                                         <div style={{ display: 'grid', gap: 8 }}>
-                                            {list.length === 0 ? (
+                                            {list.filter((student) => matchesSearchQuery(studentSearchTerm, student.name, student.studentId)).length === 0 ? (
                                                 <div className="text-muted" style={{ fontSize: 13 }}>None</div>
                                             ) : (
-                                                list.map((student, idx) => {
+                                                list
+                                                    .filter((student) => matchesSearchQuery(studentSearchTerm, student.name, student.studentId))
+                                                    .map((student, idx) => {
                                                     const isActive = activeStudent?.studentId === student.studentId;
                                                     return (
                                                         <button
@@ -268,6 +291,13 @@ export default function TeacherExamResponses() {
                                 </h3>
                                 <span className="badge badge-info">{data.questions.length} Questions</span>
                             </div>
+                            <div style={{ padding: '16px 20px 0' }}>
+                                <SearchInput
+                                    value={questionSearchTerm}
+                                    onChange={setQuestionSearchTerm}
+                                    placeholder="Search questions by text, answer, score, or status"
+                                />
+                            </div>
 
                             <div className="table-wrapper" style={{ margin: 0, border: 'none' }}>
                                 <table style={{ margin: 0 }}>
@@ -282,7 +312,7 @@ export default function TeacherExamResponses() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {pageQuestions.map((q, idx) => {
+                                        {filteredPageQuestions.map((q, idx) => {
                                             const resp = activeResponses.find(r => r.questionId && r.questionId.toString() === q._id.toString());
                                             const isSelected = selectedQ?._id === q._id;
                                             const isGradingThisRow = gradingKey === `${activeStudent.studentId}:${q._id}`;
@@ -343,6 +373,13 @@ export default function TeacherExamResponses() {
                                                 </tr>
                                             );
                                         })}
+                                        {filteredPageQuestions.length === 0 && (
+                                            <tr>
+                                                <td colSpan="6" className="text-center text-muted" style={{ padding: 32 }}>
+                                                    No questions match your search.
+                                                </td>
+                                            </tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>

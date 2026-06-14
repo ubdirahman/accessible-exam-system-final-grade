@@ -1,7 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
-import { normalizeStudentIdFromSpeech, sanitizeStudentId } from '../utils/studentIdSpeech';
+import { sanitizeStudentId } from '../utils/studentIdSpeech';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
+import useConfirmDialog from '../hooks/useConfirmDialog';
+
+// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
+const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
 
 export default function AdminStudents() {
     const { user } = useAuth();
@@ -15,26 +21,23 @@ export default function AdminStudents() {
     const [showStudentForm, setShowStudentForm] = useState(false);
     const [newStudent, setNewStudent] = useState({ name: '', studentId: '', email: '', classId: '' });
     const [error, setError] = useState(null);
-    // Voice Recording State
-    const [isListeningId, setIsListeningId] = useState(false);
-    const recognitionRef = useRef(null);
-    const recordingTimeoutRef = useRef(null);
-    const isManuallyStoppedRef = useRef(true);
+    const [touched, setTouched] = useState({});
 
-    // ... (Keep existing load functions)
     const [selectedClass, setSelectedClass] = useState(null);
     const [studentLoading, setStudentLoading] = useState(false);
     const [editingId, setEditingId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', email: '', classId: '' });
+    const [classSearchTerm, setClassSearchTerm] = useState('');
+    const [studentSearchTerm, setStudentSearchTerm] = useState('');
+
+    const { confirmDialog, askConfirm } = useConfirmDialog();
 
     const loadFaculties = async () => {
         if (!isSuper) return;
         try {
             const res = await api.get('/faculties');
             setFaculties(res.data);
-            if (!selectedFaculty && res.data.length > 0) {
-                setSelectedFaculty(res.data[0]._id);
-            }
+            if (!selectedFaculty && res.data.length > 0) setSelectedFaculty(res.data[0]._id);
         } catch (err) {
             setError('Failed to load faculties.');
         }
@@ -67,156 +70,67 @@ export default function AdminStudents() {
         }
     };
 
-    useEffect(() => {
-        loadFaculties();
-    }, []);
+    useEffect(() => { loadFaculties(); }, []);
 
     useEffect(() => {
         const fid = isSuper ? selectedFaculty : user?.facultyId;
         if (fid) {
             loadClasses(fid);
-            setSelectedClass(null); // Reset class selection when faculty changes
+            setSelectedClass(null);
         }
     }, [selectedFaculty, isSuper, user?.facultyId]);
 
     useEffect(() => {
-        if (selectedClass) {
-            loadStudents(selectedClass._id);
-        }
+        if (selectedClass) loadStudents(selectedClass._id);
     }, [selectedClass]);
 
-    // Handle Voice Id Listening
-    const toggleListenId = () => {
-        if (isListeningId) {
-            stopListening();
-        } else {
-            setNewStudent(prev => ({ ...prev, studentId: '' })); // Clear old ID
-            isManuallyStoppedRef.current = false;
-            startListening();
-
-            // Auto stop firmly after 2 minutes (120,000 ms)
-            if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
-            recordingTimeoutRef.current = setTimeout(() => {
-                stopListening();
-            }, 120000);
-        }
+    // Form validation
+    const formErrors = {
+        name: !newStudent.name?.trim(),
+        studentId: !newStudent.studentId?.trim()
     };
-
-    const stopListening = () => {
-        isManuallyStoppedRef.current = true;
-        setIsListeningId(false);
-        if (recognitionRef.current) {
-            try {
-                recognitionRef.current.stop();
-            } catch (e) {
-                // Ignore stop error
-            }
-        }
-        if (recordingTimeoutRef.current) {
-            clearTimeout(recordingTimeoutRef.current);
-        }
-    };
-
-    const startListening = () => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert('Your browser does not support voice input.');
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        const parseWordsToId = (text) => {
-            return normalizeStudentIdFromSpeech(text) || sanitizeStudentId(text);
-        };
-
-        recognition.onresult = (event) => {
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript;
-                }
-            }
-
-            if (finalTranscript) {
-                const newParts = parseWordsToId(finalTranscript);
-                if (newParts) {
-                    setNewStudent(prev => {
-                        const current = sanitizeStudentId(prev.studentId);
-                        let updatedId = current + newParts;
-
-                        // Avoid duplicate chunks when recognizer repeats a final segment
-                        if (current === newParts || current.endsWith(newParts)) {
-                            updatedId = current;
-                        } else if (newParts.startsWith(current)) {
-                            updatedId = newParts;
-                        }
-
-                        return { ...prev, studentId: updatedId };
-                    });
-                }
-            }
-        };
-
-        recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-            // Don't auto stop on errors like no-speech, let it retry
-        };
-
-        recognition.onend = () => {
-            // Auto-restart if we haven't manually stopped it & time hasn't run out
-            if (!isManuallyStoppedRef.current) {
-                try {
-                    recognition.start();
-                } catch (e) {
-                    console.error("Restart error", e);
-                }
-            } else {
-                setIsListeningId(false);
-            }
-        };
-
-        try {
-            recognition.start();
-            recognitionRef.current = recognition;
-            setIsListeningId(true);
-        } catch (e) {
-            setIsListeningId(false);
-        }
-    };
-
+    const showFormError = (field) => touched[field] && formErrors[field];
 
     const addStudent = async (e) => {
         e.preventDefault();
+        setTouched({ name: true, studentId: true });
+        if (Object.values(formErrors).some(Boolean)) return;
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
             const cleanStudentId = sanitizeStudentId(newStudent.studentId);
             if (!cleanStudentId) {
-                alert('Student ID is required.');
+                setTouched(p => ({ ...p, studentId: true }));
                 return;
             }
-
             const payload = { ...newStudent, studentId: cleanStudentId, classId: selectedClass._id, facultyId };
             await api.post('/exams/students', payload);
             setNewStudent({ name: '', studentId: '', email: '', classId: '' });
             setShowStudentForm(false);
+            setTouched({});
             loadStudents(selectedClass._id);
         } catch (err) {
-            alert(err.response?.data?.message || 'Error adding student');
+            setError(err.response?.data?.message || 'Error adding student');
         }
     };
 
-    const deleteStudent = async (studentId) => {
-        if (!confirm('Delete this student?')) return;
+    const deleteStudent = async (studentId, studentName) => {
+        const confirmed = await askConfirm({
+            title: 'Delete Student?',
+            message: `"${studentName}" (ID: ${studentId}) will be permanently removed from this class.`,
+            confirmText: 'Yes, Delete',
+            type: 'danger'
+        });
+        if (!confirmed) return;
+
+        // Optimistic update
+        setStudents(prev => prev.filter(s => s.studentId !== studentId));
         try {
             const fid = isSuper ? selectedFaculty : user?.facultyId;
             await api.delete(`/exams/students/${studentId}`, { params: { facultyId: fid } });
-            loadStudents(selectedClass._id);
         } catch (err) {
             console.error('Delete student error:', err);
+            setError('Failed to delete student.');
+            loadStudents(selectedClass._id);
         }
     };
 
@@ -226,6 +140,7 @@ export default function AdminStudents() {
     };
 
     const saveEdit = async () => {
+        if (!editForm.name?.trim()) return;
         try {
             const fid = isSuper ? selectedFaculty : user?.facultyId;
             const student = students.find(s => s._id === editingId);
@@ -238,17 +153,21 @@ export default function AdminStudents() {
             setEditingId(null);
             loadStudents(selectedClass._id);
         } catch (err) {
-            alert(err.response?.data?.message || 'Error saving student');
+            setError(err.response?.data?.message || 'Error saving student');
         }
     };
 
-    if (loading) return <div className="spinner"></div>;
+    const filteredClasses = classes.filter((classroom) => matchesSearchQuery(classSearchTerm, classroom.name, classroom.code, classroom.semesterId?.name));
+    const filteredStudents = students.filter((student) => matchesSearchQuery(studentSearchTerm, student.name, student.studentId, student.email, student.classId?.name, student.examsTaken));
+
+    if (loading) return <div className="spinner" />;
 
     if (selectedClass) {
         return (
             <div className="fade-in">
+                {confirmDialog}
                 <div className="back-link" onClick={() => setSelectedClass(null)}>
-                    <i className="fa-solid fa-arrow-left"></i> Back to Classes
+                    <i className="fa-solid fa-arrow-left" /> Back to Classes
                 </div>
 
                 <div className="detail-header">
@@ -257,8 +176,8 @@ export default function AdminStudents() {
                             <h1 style={{ fontWeight: 800, marginBottom: 4 }}>Students in {selectedClass.name}</h1>
                             <div className="class-code">{selectedClass.code || 'No Code'} • {selectedClass.semesterId?.name || 'Manual Enrollment'}</div>
                         </div>
-                        <button className="btn btn-primary btn-sm" onClick={() => setShowStudentForm(!showStudentForm)}>
-                            {showStudentForm ? <><i className="fa-solid fa-xmark"></i> Cancel</> : <><i className="fa-solid fa-user-plus"></i> Add Student</>}
+                        <button className="btn btn-primary btn-sm" onClick={() => { setShowStudentForm(!showStudentForm); setTouched({}); }}>
+                            {showStudentForm ? <><i className="fa-solid fa-xmark" /> Cancel</> : <><i className="fa-solid fa-user-plus" /> Add Student</>}
                         </button>
                     </div>
                 </div>
@@ -269,29 +188,26 @@ export default function AdminStudents() {
                         <form onSubmit={addStudent} className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
                             <div className="input-group">
                                 <label>Full Name</label>
-                                <input className="input" value={newStudent.name} onChange={e => setNewStudent({ ...newStudent, name: e.target.value })} required placeholder="e.g. Ahmed Ali" />
+                                <input
+                                    className={`input${showFormError('name') ? ' input-error' : ''}`}
+                                    value={newStudent.name}
+                                    onChange={e => setNewStudent({ ...newStudent, name: nameOnly(e.target.value) })}
+                                    onBlur={() => setTouched(p => ({ ...p, name: true }))}
+                                    placeholder="e.g. Ahmed Ali"
+                                />
+                                {showFormError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                             </div>
                             <div className="input-group">
-                                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span>Student ID</span>
-                                    <button
-                                        type="button"
-                                        onClick={toggleListenId}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            color: isListeningId ? 'red' : 'inherit',
-                                            fontSize: '1.2rem',
-                                            animation: isListeningId ? 'pulse 1.5s infinite' : 'none'
-                                        }}
-                                        title="Record ID Voice (Up to 2 mins)"
-                                    >
-                                        <i className="fa-solid fa-microphone"></i>
-                                    </button>
-                                </label>
-                                <input className="input" value={newStudent.studentId} onChange={e => setNewStudent({ ...newStudent, studentId: sanitizeStudentId(e.target.value) })} maxLength={40} required placeholder="e.g. CA220199" />
-                                {isListeningId && <small style={{ color: 'red' }}>Listening for ID (max 2 mins)... You can speak letter by letter.</small>}
+                                <label>Student ID</label>
+                                <input
+                                    className={`input${showFormError('studentId') ? ' input-error' : ''}`}
+                                    value={newStudent.studentId}
+                                    onChange={e => setNewStudent({ ...newStudent, studentId: sanitizeStudentId(e.target.value) })}
+                                    onBlur={() => setTouched(p => ({ ...p, studentId: true }))}
+                                    maxLength={40}
+                                    placeholder="e.g. CA220199"
+                                />
+                                {showFormError('studentId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                             </div>
                             <div className="input-group">
                                 <label>Email Address</label>
@@ -307,10 +223,15 @@ export default function AdminStudents() {
                 {error && <div className="badge badge-danger mb-md">{error}</div>}
 
                 <div className="card">
+                    <div className="mb-sm">
+                        <SearchInput value={studentSearchTerm} onChange={setStudentSearchTerm} placeholder="Search by student name, ID, email, or exam count" />
+                    </div>
                     {studentLoading ? (
                         <div className="spinner" />
-                    ) : students.length === 0 ? (
-                        <div className="text-center py-lg text-muted">No students registered in this class.</div>
+                    ) : filteredStudents.length === 0 ? (
+                        <div className="text-center py-lg text-muted">
+                            {students.length === 0 ? 'No students registered in this class.' : 'No students match your search.'}
+                        </div>
                     ) : (
                         <div className="table-wrapper">
                             <table>
@@ -324,11 +245,11 @@ export default function AdminStudents() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {students.map((s) => (
+                                    {filteredStudents.map((s) => (
                                         <tr key={s._id}>
                                             <td style={{ fontWeight: 600 }}>
                                                 {editingId === s._id
-                                                    ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                                                    ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: nameOnly(e.target.value) })} />
                                                     : s.name}
                                             </td>
                                             <td>{s.studentId}</td>
@@ -346,8 +267,10 @@ export default function AdminStudents() {
                                                     </div>
                                                 ) : (
                                                     <div className="flex gap-sm">
-                                                        <button className="btn btn-sm btn-info" onClick={() => startEdit(s)}><i className="fa-solid fa-pen"></i></button>
-                                                        <button className="btn btn-sm btn-danger" onClick={() => deleteStudent(s.studentId)}><i className="fa-solid fa-trash"></i></button>
+                                                        <button className="btn btn-sm btn-info" onClick={() => startEdit(s)}><i className="fa-solid fa-pen" /></button>
+                                                        <button className="btn btn-sm btn-danger" onClick={() => deleteStudent(s.studentId, s.name)}>
+                                                            <i className="fa-solid fa-trash" />
+                                                        </button>
                                                     </div>
                                                 )}
                                             </td>
@@ -364,6 +287,7 @@ export default function AdminStudents() {
 
     return (
         <div className="fade-in">
+            {confirmDialog}
             <div className="flex items-center justify-between mb-md">
                 <div>
                     <h1 style={{ fontWeight: 800 }}>Student Management</h1>
@@ -386,8 +310,12 @@ export default function AdminStudents() {
                     <div className="text-muted">No classes found. Create classes first to add students.</div>
                 </div>
             ) : (
-                <div className="class-grid">
-                    {classes.map(c => (
+                <>
+                    <div className="card mb-md">
+                        <SearchInput value={classSearchTerm} onChange={setClassSearchTerm} placeholder="Search classes by name, code, or semester" />
+                    </div>
+                    <div className="class-grid">
+                    {filteredClasses.map(c => (
                         <div key={c._id} className="class-card" onClick={() => setSelectedClass(c)}>
                             <div className="class-badge">Active</div>
                             <div>
@@ -395,14 +323,20 @@ export default function AdminStudents() {
                                 <div className="class-code">{c.code || 'No Code'}</div>
                             </div>
                             <div className="class-info">
-                                <i className="fa-solid fa-user-graduate"></i> Manage Registered Students
+                                <i className="fa-solid fa-user-graduate" /> Manage Registered Students
                             </div>
                             <div className="class-actions-overlay" onClick={e => e.stopPropagation()}>
                                 <div className="text-muted" style={{ fontSize: 12 }}>Semester: {c.semesterId?.name || '—'}</div>
                             </div>
                         </div>
                     ))}
-                </div>
+                    </div>
+                    {filteredClasses.length === 0 && (
+                        <div className="card text-center py-lg">
+                            <div className="text-muted">No classes match your search.</div>
+                        </div>
+                    )}
+                </>
             )}
             {error && <div className="badge badge-danger mt-md">{error}</div>}
         </div>

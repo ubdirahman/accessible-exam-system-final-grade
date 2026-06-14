@@ -1,6 +1,40 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 const AuthContext = createContext(null);
+const KNOWN_ROLES = new Set(['student', 'teacher', 'admin', 'super_admin']);
+
+export function normalizeRole(role) {
+    if (typeof role !== 'string') return '';
+
+    const normalized = role.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return KNOWN_ROLES.has(normalized) ? normalized : '';
+}
+
+export function normalizeUser(userData) {
+    if (!userData || typeof userData !== 'object') {
+        return null;
+    }
+
+    const normalizedRole = normalizeRole(userData.role);
+    if (!normalizedRole) {
+        return null;
+    }
+
+    return {
+        ...userData,
+        role: normalizedRole
+    };
+}
+
+export function getDefaultRouteForRole(role) {
+    const normalizedRole = normalizeRole(role);
+
+    if (normalizedRole === 'student') return '/student/dashboard';
+    if (normalizedRole === 'teacher') return '/teacher/dashboard';
+    if (normalizedRole === 'admin' || normalizedRole === 'super_admin') return '/admin/dashboard';
+
+    return '';
+}
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
@@ -13,13 +47,12 @@ export function AuthProvider({ children }) {
 
         if (savedToken && savedUser) {
             try {
-                const parsed = JSON.parse(savedUser);
-                // make sure we have a valid role property (previous versions omitted it)
-                if (parsed && typeof parsed.role === 'string' && parsed.role.length > 0) {
+                const parsed = normalizeUser(JSON.parse(savedUser));
+                if (parsed) {
                     setToken(savedToken);
                     setUser(parsed);
                 } else {
-                    // corrupt or legacy user object; clear everything to avoid redirect loops
+                    // Corrupt or legacy auth data can trigger redirect loops, so clear it.
                     localStorage.removeItem('token');
                     localStorage.removeItem('user');
                 }
@@ -33,34 +66,39 @@ export function AuthProvider({ children }) {
         setLoading(false);
     }, []);
 
-    const login = (userData, jwtToken) => {
-        setUser(userData);
+    const login = useCallback((userData, jwtToken) => {
+        const normalizedUser = normalizeUser(userData);
+
+        if (!normalizedUser) {
+            throw new Error('Cannot log in without a recognized user role.');
+        }
+
+        setUser(normalizedUser);
         setToken(jwtToken);
         localStorage.setItem('token', jwtToken);
-        localStorage.setItem('user', JSON.stringify(userData));
-    };
+        localStorage.setItem('user', JSON.stringify(normalizedUser));
+    }, []);
 
-    const logout = () => {
+    const logout = useCallback(() => {
         setUser(null);
         setToken(null);
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-    };
+    }, []);
 
-    const value = {
+    const value = useMemo(() => ({
         user,
         token,
         loading,
         login,
         logout,
-        // require both token and a recognized role to be considered authenticated
-        isAuthenticated: !!token && !!user?.role,
-        isAdmin: user?.role === 'admin',
-        isSuperAdmin: user?.role === 'super_admin',
-        isTeacher: user?.role === 'teacher',
-        isStudent: user?.role === 'student',
-        isAdminOrTeacher: user?.role === 'admin' || user?.role === 'teacher' || user?.role === 'super_admin'
-    };
+        isAuthenticated: !!token && !!normalizeRole(user?.role),
+        isAdmin: normalizeRole(user?.role) === 'admin',
+        isSuperAdmin: normalizeRole(user?.role) === 'super_admin',
+        isTeacher: normalizeRole(user?.role) === 'teacher',
+        isStudent: normalizeRole(user?.role) === 'student',
+        isAdminOrTeacher: ['admin', 'teacher', 'super_admin'].includes(normalizeRole(user?.role))
+    }), [user, token, loading, login, logout]);
 
     return (
         <AuthContext.Provider value={value}>

@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
 import { subscribeResultExamSync } from '../utils/resultExamSync';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
 
 export default function AdminResultExam() {
     const { user } = useAuth();
@@ -15,6 +17,7 @@ export default function AdminResultExam() {
     const [loading, setLoading] = useState(true);
     const [tableLoading, setTableLoading] = useState(false);
     const [error, setError] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
 
     const loadFaculties = useCallback(async () => {
         if (!isSuperAdmin) return user?.facultyId || '';
@@ -176,6 +179,15 @@ export default function AdminResultExam() {
     if (loading) return <div className="spinner"></div>;
 
     const selectedClassInfo = classes.find((item) => item._id === selectedClass);
+    const filteredStudents = matrix.students.filter((student) => matchesSearchQuery(
+        searchTerm,
+        student.name,
+        student.studentId,
+        student.facultyName,
+        student.className,
+        student.totalScore,
+        student.totalPoints
+    ));
 
     return (
         <div className="fade-in">
@@ -250,6 +262,13 @@ export default function AdminResultExam() {
                             </div>
                             {tableLoading && <div className="text-muted">Loading results...</div>}
                         </div>
+                        <div className="mb-sm">
+                            <SearchInput
+                                value={searchTerm}
+                                onChange={setSearchTerm}
+                                placeholder="Search by student name, ID, faculty, class, or score"
+                            />
+                        </div>
 
                         <div className="table-wrapper">
                             <table>
@@ -267,7 +286,7 @@ export default function AdminResultExam() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {matrix.students.map((student) => (
+                                    {filteredStudents.map((student) => (
                                         <tr key={student.id}>
                                             <td style={{ fontWeight: 700 }}>{student.name}</td>
                                             <td>{student.studentId}</td>
@@ -302,10 +321,10 @@ export default function AdminResultExam() {
                                         </tr>
                                     ))}
 
-                                    {!tableLoading && matrix.students.length === 0 && (
+                                    {!tableLoading && filteredStudents.length === 0 && (
                                         <tr>
                                             <td colSpan={6 + matrix.subjects.length} className="text-center text-muted" style={{ padding: 40 }}>
-                                                No students or results found for this class yet.
+                                                {matrix.students.length === 0 ? 'No students or results found for this class yet.' : 'No students match your search.'}
                                             </td>
                                         </tr>
                                     )}

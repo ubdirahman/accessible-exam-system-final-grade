@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTTS } from '../hooks/useTTS';
 import api from '../api/axios';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
+import useConfirmDialog from '../hooks/useConfirmDialog';
 
 export default function AdminExams() {
     const { speak } = useTTS();
@@ -13,6 +16,9 @@ export default function AdminExams() {
     
     // UI States
     const [selectedExam, setSelectedExam] = useState(null); // For Detail Modal
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const { confirmDialog, askConfirm } = useConfirmDialog();
 
     useEffect(() => {
         loadExams();
@@ -55,13 +61,24 @@ export default function AdminExams() {
         }
     };
 
-    const deleteExam = async (examId) => {
-        if (!confirm('Delete this exam and all related data?')) return;
+    const deleteExam = async (examId, title) => {
+        const confirmed = await askConfirm({
+            title: 'Delete Exam?',
+            message: `"${title}" and all related responses, results, and recordings will be permanently deleted.`,
+            confirmText: 'Yes, Delete',
+            type: 'danger'
+        });
+        if (!confirmed) return;
+
+        // Optimistic update
+        const prev = [...exams];
+        setExams(e => e.filter(x => x._id !== examId));
         try {
             await api.delete(`/exams/${examId}`);
-            loadExams();
         } catch (err) {
             console.error('Delete error:', err);
+            setExams(prev); // Restore on error
+            setError('Failed to delete exam.');
         }
     };
 
@@ -75,10 +92,22 @@ export default function AdminExams() {
         }
     };
 
+    const filteredExams = exams.filter((exam) => matchesSearchQuery(
+        searchTerm,
+        exam.title,
+        exam.subjectId?.name,
+        exam.subjectId?.teacherId?.name,
+        exam.createdBy?.name,
+        exam._id,
+        exam.timeLimit,
+        exam.active ? 'active' : 'inactive'
+    ));
+
     if (loading) return <div className="spinner"></div>;
 
     return (
         <div className="fade-in">
+            {confirmDialog}
             <div className="flex items-center justify-between mb-lg">
                 <div>
                     <h1 style={{ fontWeight: 800 }}>Examinations</h1>
@@ -146,6 +175,13 @@ export default function AdminExams() {
             )}
 
             <div className="table-wrapper card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: 16, borderBottom: '1px solid var(--border-color)' }}>
+                    <SearchInput
+                        value={searchTerm}
+                        onChange={setSearchTerm}
+                        placeholder="Search exams by title, subject, teacher, status, or ID"
+                    />
+                </div>
                 <table>
                     <thead style={{ background: 'var(--bg-secondary)' }}>
                         <tr>
@@ -157,7 +193,7 @@ export default function AdminExams() {
                         </tr>
                     </thead>
                     <tbody>
-                        {exams.map((exam) => (
+                        {filteredExams.map((exam) => (
                             <tr key={exam._id}>
                                 <td style={{ paddingLeft: 24 }}>
                                     <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{exam.subjectId?.name || '—'}</div>
@@ -188,14 +224,14 @@ export default function AdminExams() {
                                         <button className="btn btn-sm btn-secondary" onClick={() => toggleExamActive(exam._id, exam.active)}>
                                             <i className={`fa-solid ${exam.active ? 'fa-pause' : 'fa-play'}`}></i>
                                         </button>
-                                        <button className="btn btn-sm btn-danger" onClick={() => deleteExam(exam._id)}>
+                                        <button className="btn btn-sm btn-danger" onClick={() => deleteExam(exam._id, exam.title)}>
                                             <i className="fa-solid fa-trash"></i>
                                         </button>
                                     </div>
                                 </td>
                             </tr>
                         ))}
-                        {exams.length === 0 && (
+                        {filteredExams.length === 0 && (
                             <tr><td colSpan="6" className="text-center text-muted" style={{ padding: 60 }}>No examinations found. Create one to get started.</td></tr>
                         )}
                     </tbody>

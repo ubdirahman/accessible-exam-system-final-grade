@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/axios';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
+import useConfirmDialog from '../hooks/useConfirmDialog';
 
 export default function TeacherExams() {
     const navigate = useNavigate();
@@ -11,6 +14,9 @@ export default function TeacherExams() {
     
     // UI States
     const [selectedExam, setSelectedExam] = useState(null); // For Detail Modal
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const { confirmDialog, askConfirm } = useConfirmDialog();
 
     useEffect(() => {
         loadExams();
@@ -44,20 +50,42 @@ export default function TeacherExams() {
         setAnalytics(map);
     };
 
-    const deleteExam = async (examId) => {
-        if (!confirm('Delete this exam and all related data?')) return;
+    const deleteExam = async (examId, title) => {
+        const confirmed = await askConfirm({
+            title: 'Delete Exam?',
+            message: `"${title}" and all related responses, results, and recordings will be permanently deleted.`,
+            confirmText: 'Yes, Delete',
+            type: 'danger'
+        });
+        if (!confirmed) return;
+
+        // Optimistic update
+        const prev = [...exams];
+        setExams(e => e.filter(x => x._id !== examId));
         try {
             await api.delete(`/exams/${examId}`);
-            loadExams();
         } catch (err) {
             console.error('Delete error:', err);
+            setExams(prev);
+            setError('Failed to delete exam.');
         }
     };
+
+    const filteredExams = exams.filter((exam) => matchesSearchQuery(
+        searchTerm,
+        exam.title,
+        exam.subjectId?.name,
+        exam.subjectId?.teacherId?.name,
+        exam._id,
+        exam.timeLimit,
+        exam.active ? 'active' : 'hidden'
+    ));
 
     if (loading) return <div className="spinner"></div>;
 
     return (
         <div className="fade-in">
+            {confirmDialog}
             <div className="flex items-center justify-between mb-lg">
                 <div>
                     <h1 style={{ fontWeight: 800 }}>My Examinations</h1>
@@ -125,6 +153,13 @@ export default function TeacherExams() {
             )}
 
             <div className="table-wrapper card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: 16, borderBottom: '1px solid var(--border-color)' }}>
+                    <SearchInput
+                        value={searchTerm}
+                        onChange={setSearchTerm}
+                        placeholder="Search exams by title, subject, status, or ID"
+                    />
+                </div>
                 <table>
                     <thead style={{ background: 'var(--bg-secondary)' }}>
                         <tr>
@@ -136,7 +171,7 @@ export default function TeacherExams() {
                         </tr>
                     </thead>
                     <tbody>
-                        {exams.map((exam) => (
+                        {filteredExams.map((exam) => (
                             <tr key={exam._id}>
                                 <td style={{ paddingLeft: 24 }}>
                                     <div style={{ fontWeight: 600 }}>{exam.subjectId?.name || 'Manual'}</div>
@@ -158,14 +193,14 @@ export default function TeacherExams() {
                                         <button className="btn btn-sm btn-secondary" onClick={() => navigate(`/teacher/exams/edit/${exam._id}`)}>
                                             <i className="fa-solid fa-pen"></i> Edit
                                         </button>
-                                        <button className="btn btn-sm btn-danger" onClick={() => deleteExam(exam._id)}>
+                                        <button className="btn btn-sm btn-danger" onClick={() => deleteExam(exam._id, exam.title)}>
                                             <i className="fa-solid fa-trash"></i>
                                         </button>
                                     </div>
                                 </td>
                             </tr>
                         ))}
-                        {exams.length === 0 && (
+                        {filteredExams.length === 0 && (
                             <tr><td colSpan="5" className="text-center text-muted" style={{ padding: 60 }}>You haven't created any exams yet.</td></tr>
                         )}
                     </tbody>

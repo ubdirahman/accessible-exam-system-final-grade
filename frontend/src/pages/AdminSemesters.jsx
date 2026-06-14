@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
+import useConfirmDialog from '../hooks/useConfirmDialog';
+
+// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
+const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
 
 export default function AdminSemesters() {
     const { user } = useAuth();
@@ -14,14 +20,16 @@ export default function AdminSemesters() {
     const [error, setError] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', startDate: '', endDate: '' });
+    const [semesterSearchTerm, setSemesterSearchTerm] = useState('');
+    const [classSearchTerm, setClassSearchTerm] = useState('');
+    const [touched, setTouched] = useState({});
 
-    // New states for semester detailing
+    // Semester detailing
     const [selectedSemester, setSelectedSemester] = useState(null);
     const [semesterClasses, setSemesterClasses] = useState([]);
     const [classLoading, setClassLoading] = useState(false);
-    const [showClassForm, setShowClassForm] = useState(false);  // Wait, I already removed showClassForm and classForm in previous step.
-    // The previous step removed them. Let me just remove editingClassId and editClassForm carefully.
 
+    const { confirmDialog, askConfirm } = useConfirmDialog();
 
     const loadFaculties = async () => {
         if (!isSuper) return;
@@ -62,9 +70,7 @@ export default function AdminSemesters() {
         }
     };
 
-    useEffect(() => {
-        loadFaculties();
-    }, []);
+    useEffect(() => { loadFaculties(); }, []);
 
     useEffect(() => {
         const fid = isSuper ? selectedFaculty : user?.facultyId;
@@ -72,36 +78,51 @@ export default function AdminSemesters() {
     }, [selectedFaculty, user?.facultyId, isSuper]);
 
     useEffect(() => {
-        if (selectedSemester) {
-            loadSemesterClasses(selectedSemester._id);
-        }
+        if (selectedSemester) loadSemesterClasses(selectedSemester._id);
     }, [selectedSemester]);
+
+    const isNameEmpty = () => !form.name?.trim();
+    const showNameError = () => touched.name && isNameEmpty();
 
     const createSemester = async (e) => {
         e.preventDefault();
+        setTouched({ name: true });
+        if (isNameEmpty()) return;
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         if (!facultyId) return setError('Select a faculty first.');
         try {
             await api.post('/semesters', { ...form, facultyId });
             setForm({ name: '', startDate: '', endDate: '' });
             setShowAddForm(false);
+            setTouched({});
             loadSemesters(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to create semester');
         }
     };
 
-    const deleteSemester = async (e, id) => {
+    const deleteSemester = async (e, id, name) => {
         e.stopPropagation();
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         if (!facultyId) return;
-        if (!window.confirm('Delete this semester? This cannot be undone.')) return;
+
+        const confirmed = await askConfirm({
+            title: 'Delete Semester?',
+            message: `"${name}" and all its associated classes will be permanently deleted.`,
+            confirmText: 'Yes, Delete',
+            type: 'danger'
+        });
+        if (!confirmed) return;
+
+        // Optimistic update
+        setSemesters(prev => prev.filter(s => s._id !== id));
+        if (selectedSemester?._id === id) setSelectedSemester(null);
+
         try {
             await api.delete(`/semesters/${id}`, { params: { facultyId } });
-            loadSemesters(facultyId);
-            if (selectedSemester?._id === id) setSelectedSemester(null);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to delete semester');
+            loadSemesters(facultyId); // Restore on error
         }
     };
 
@@ -117,6 +138,7 @@ export default function AdminSemesters() {
 
     const saveEdit = async (e) => {
         e.stopPropagation();
+        if (!editForm.name?.trim()) return;
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         try {
             await api.put(`/semesters/${editingId}`, { ...editForm, facultyId });
@@ -127,17 +149,30 @@ export default function AdminSemesters() {
         }
     };
 
-
     const formatDate = (dateString) => {
         if (!dateString) return '—';
         return new Date(dateString).toLocaleDateString();
-    }
+    };
+
+    const filteredSemesters = semesters.filter((semester) => matchesSearchQuery(
+        semesterSearchTerm,
+        semester.name,
+        formatDate(semester.startDate),
+        formatDate(semester.endDate)
+    ));
+
+    const filteredSemesterClasses = semesterClasses.filter((classroom) => matchesSearchQuery(
+        classSearchTerm,
+        classroom.name,
+        classroom.code
+    ));
 
     if (selectedSemester) {
         return (
             <div className="fade-in">
+                {confirmDialog}
                 <div className="back-link" onClick={() => setSelectedSemester(null)}>
-                    <i className="fa-solid fa-arrow-left"></i> Back to Semesters
+                    <i className="fa-solid fa-arrow-left" /> Back to Semesters
                 </div>
 
                 <div className="detail-header">
@@ -153,10 +188,19 @@ export default function AdminSemesters() {
 
                 <div className="card">
                     <h3 className="mb-md">Classes in this Semester</h3>
+                    <div className="mb-sm">
+                        <SearchInput
+                            value={classSearchTerm}
+                            onChange={setClassSearchTerm}
+                            placeholder="Search semester classes by name or code"
+                        />
+                    </div>
                     {classLoading ? (
                         <div className="spinner" />
-                    ) : semesterClasses.length === 0 ? (
-                        <div className="text-muted">No classes found for this semester.</div>
+                    ) : filteredSemesterClasses.length === 0 ? (
+                        <div className="text-muted">
+                            {semesterClasses.length === 0 ? 'No classes found for this semester.' : 'No classes match your search.'}
+                        </div>
                     ) : (
                         <div className="table-wrapper">
                             <table>
@@ -167,7 +211,7 @@ export default function AdminSemesters() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {semesterClasses.map(c => (
+                                    {filteredSemesterClasses.map(c => (
                                         <tr key={c._id}>
                                             <td style={{ fontWeight: 600 }}>{c.name}</td>
                                             <td>{c.code || '—'}</td>
@@ -185,19 +229,20 @@ export default function AdminSemesters() {
 
     return (
         <div className="fade-in">
+            {confirmDialog}
             <div className="flex items-center justify-between mb-md">
                 <div>
                     <h1 style={{ fontWeight: 800 }}>Manage Semesters</h1>
                     <p className="text-muted">Create and manage semesters for your academic calendar.</p>
                 </div>
-                <button 
-                    className={`btn ${showAddForm ? 'btn-secondary' : 'btn-primary'}`} 
-                    onClick={() => setShowAddForm(!showAddForm)}
+                <button
+                    className={`btn ${showAddForm ? 'btn-secondary' : 'btn-primary'}`}
+                    onClick={() => { setShowAddForm(!showAddForm); setTouched({}); }}
                 >
                     {showAddForm ? (
-                        <><i className="fa-solid fa-xmark"></i> Cancel</>
+                        <><i className="fa-solid fa-xmark" /> Cancel</>
                     ) : (
-                        <><i className="fa-solid fa-plus"></i> Add Semester</>
+                        <><i className="fa-solid fa-plus" /> Add Semester</>
                     )}
                 </button>
             </div>
@@ -218,7 +263,14 @@ export default function AdminSemesters() {
                     <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={createSemester}>
                         <div className="input-group">
                             <label>Semester Name</label>
-                            <input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="e.g., Fall 2024" />
+                            <input
+                                className={`input${showNameError() ? ' input-error' : ''}`}
+                                value={form.name}
+                                onChange={e => setForm({ ...form, name: nameOnly(e.target.value) })}
+                                onBlur={() => setTouched(p => ({ ...p, name: true }))}
+                                placeholder="e.g., Fall 2024"
+                            />
+                            {showNameError() && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
                         </div>
                         <div className="input-group">
                             <label>Start Date</label>
@@ -228,7 +280,7 @@ export default function AdminSemesters() {
                             <label>End Date</label>
                             <input className="input" type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} />
                         </div>
-                        <button className="btn btn-primary" type="submit">Save Semester</button>
+                        <button className="btn btn-primary" type="submit" style={{ alignSelf: 'end' }}>Save Semester</button>
                     </form>
                     {error && <div className="badge badge-danger mt-sm">{error}</div>}
                 </div>
@@ -241,18 +293,26 @@ export default function AdminSemesters() {
                     <div className="text-muted">No semesters found. Click "Add Semester" to create one.</div>
                 </div>
             ) : (
-                <div className="class-grid">
-                    {semesters.map(s => (
+                <>
+                    <div className="card mb-md">
+                        <SearchInput
+                            value={semesterSearchTerm}
+                            onChange={setSemesterSearchTerm}
+                            placeholder="Search semesters by name or dates"
+                        />
+                    </div>
+                    <div className="class-grid">
+                    {filteredSemesters.map(s => (
                         <div key={s._id} className="class-card" onClick={() => setSelectedSemester(s)}>
                             <div className="class-badge">Active</div>
                             <div>
                                 <div className="class-name">
                                     {editingId === s._id ? (
-                                        <input 
-                                            className="input" 
-                                            value={editForm.name} 
+                                        <input
+                                            className="input"
+                                            value={editForm.name}
                                             onClick={e => e.stopPropagation()}
-                                            onChange={e => setEditForm({ ...editForm, name: e.target.value })} 
+                                            onChange={e => setEditForm({ ...editForm, name: nameOnly(e.target.value) })}
                                         />
                                     ) : s.name}
                                 </div>
@@ -262,8 +322,8 @@ export default function AdminSemesters() {
                             </div>
 
                             <div className="class-info">
-                                <i className="fa-solid fa-calendar-days"></i> 
-                                View Classes & Schedule
+                                <i className="fa-solid fa-calendar-days" />
+                                View Classes &amp; Schedule
                             </div>
 
                             <div className="class-actions-overlay">
@@ -275,17 +335,23 @@ export default function AdminSemesters() {
                                 ) : (
                                     <>
                                         <button className="btn btn-sm btn-secondary" onClick={(e) => startEdit(e, s)}>
-                                            <i className="fa-solid fa-pen-to-square"></i>
+                                            <i className="fa-solid fa-pen-to-square" />
                                         </button>
-                                        <button className="btn btn-sm btn-danger" onClick={(e) => deleteSemester(e, s._id)}>
-                                            <i className="fa-solid fa-trash"></i>
+                                        <button className="btn btn-sm btn-danger" onClick={(e) => deleteSemester(e, s._id, s.name)}>
+                                            <i className="fa-solid fa-trash" />
                                         </button>
                                     </>
                                 )}
                             </div>
                         </div>
                     ))}
-                </div>
+                    </div>
+                    {filteredSemesters.length === 0 && (
+                        <div className="card text-center py-lg">
+                            <div className="text-muted">No semesters match your search.</div>
+                        </div>
+                    )}
+                </>
             )}
             {error && <div className="badge badge-danger mt-md">{error}</div>}
         </div>

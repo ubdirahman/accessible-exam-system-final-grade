@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
 
 export default function ReportsPage() {
     const { user } = useAuth();
@@ -24,6 +26,9 @@ export default function ReportsPage() {
     const [selectedDetails, setSelectedDetails] = useState(null);
     const [loading, setLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState(null);
+    const [examSearchTerm, setExamSearchTerm] = useState('');
+    const [resultSearchTerm, setResultSearchTerm] = useState('');
+    const [logSearchTerm, setLogSearchTerm] = useState('');
 
     const readAnalytics = () => {
         if (!analytics) return;
@@ -168,8 +173,32 @@ export default function ReportsPage() {
         if (user?.role === 'super_admin' && selectedFaculty && ex.facultyId && ex.facultyId !== selectedFaculty) return false;
         if (selectedClass && ex.classId && ex.classId !== selectedClass) return false;
         if (selectedClass && !ex.classId) return false;
-        return true;
+        return matchesSearchQuery(
+            examSearchTerm,
+            ex.title,
+            ex.subjectId?.name,
+            ex.createdBy?.name,
+            ex._id
+        );
     });
+
+    const filteredResults = results.filter((result) => matchesSearchQuery(
+        resultSearchTerm,
+        result.studentName,
+        result.studentId,
+        result.score,
+        result.totalPoints,
+        result.correctCount,
+        result.wrongCount,
+        result.skippedCount
+    ));
+
+    const filteredLogs = logs.filter((log) => matchesSearchQuery(
+        logSearchTerm,
+        log.action,
+        log.details,
+        new Date(log.timestamp).toLocaleTimeString()
+    ));
 
     useEffect(() => {
         if (user?.role === 'super_admin') {
@@ -235,6 +264,13 @@ export default function ReportsPage() {
                         </button>
                     )}
                 </div>
+                <div className="mb-sm">
+                    <SearchInput
+                        value={examSearchTerm}
+                        onChange={setExamSearchTerm}
+                        placeholder="Search exams by title, subject, creator, or ID"
+                    />
+                </div>
                 <div className="section-tabs">
                     {filteredExams.map((exam) => (
                         <button
@@ -284,6 +320,13 @@ export default function ReportsPage() {
                         </button>
                     </div>
 
+                    <div className="mb-sm">
+                        <SearchInput
+                            value={resultSearchTerm}
+                            onChange={setResultSearchTerm}
+                            placeholder="Search results by student name, ID, or score"
+                        />
+                    </div>
                     <div className="table-wrapper">
                         <table>
                             <thead>
@@ -301,7 +344,7 @@ export default function ReportsPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {results.map((r) => {
+                                {filteredResults.map((r) => {
                                     const pct = r.totalPoints > 0 ? Math.round((r.score / r.totalPoints) * 100) : 0;
                                     return (
                                         <tr key={r._id}>
@@ -335,8 +378,8 @@ export default function ReportsPage() {
                                         </tr>
                                     );
                                 })}
-                                {results.length === 0 && (
-                                    <tr><td colSpan="10" className="text-center text-muted" style={{ padding: 40 }}>No results yet.</td></tr>
+                                {filteredResults.length === 0 && (
+                                    <tr><td colSpan="10" className="text-center text-muted" style={{ padding: 40 }}>{results.length === 0 ? 'No results yet.' : 'No results match your search.'}</td></tr>
                                 )}
                             </tbody>
                         </table>
@@ -397,7 +440,7 @@ export default function ReportsPage() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {logs.map((log, i) => (
+                                        {filteredLogs.map((log, i) => (
                                             <tr key={i}>
                                                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>
                                                     {new Date(log.timestamp).toLocaleTimeString()}
@@ -413,6 +456,13 @@ export default function ReportsPage() {
                                                 <td className="text-muted">{log.details || '—'}</td>
                                             </tr>
                                         ))}
+                                        {filteredLogs.length === 0 && (
+                                            <tr>
+                                                <td colSpan="3" className="text-center text-muted" style={{ padding: 32 }}>
+                                                    No logs match your search.
+                                                </td>
+                                            </tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>

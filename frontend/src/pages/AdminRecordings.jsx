@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import SearchInput from '../components/SearchInput';
+import { matchesSearchQuery } from '../utils/search';
 
 function formatDuration(totalSeconds = 0) {
     const safeSeconds = Math.max(0, Number(totalSeconds) || 0);
@@ -24,6 +26,7 @@ export default function AdminRecordings() {
     const [selectedFaculty, setSelectedFaculty] = useState(isSuperAdmin ? '' : user?.facultyId || '');
     const [selectedClass, setSelectedClass] = useState('');
     const [selectedExam, setSelectedExam] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
     const audioUrlsRef = useRef({});
 
     const loadFaculties = useCallback(async () => {
@@ -175,6 +178,15 @@ export default function AdminRecordings() {
 
     const completedCount = recordings.filter((item) => item.status === 'completed').length;
     const totalDurationSeconds = recordings.reduce((sum, item) => sum + (Number(item.durationSeconds) || 0), 0);
+    const filteredRecordings = recordings.filter((recording) => matchesSearchQuery(
+        searchTerm,
+        recording.studentName,
+        recording.studentId,
+        recording.subjectName,
+        recording.examTitle,
+        recording.status,
+        recording.durationSeconds
+    ));
 
     return (
         <div className="fade-in">
@@ -256,6 +268,13 @@ export default function AdminRecordings() {
                     <h3 style={{ fontWeight: 700 }}>Recorded Exam Sessions</h3>
                     {tableLoading && <div className="text-muted">Loading recordings...</div>}
                 </div>
+                <div className="mb-sm">
+                    <SearchInput
+                        value={searchTerm}
+                        onChange={setSearchTerm}
+                        placeholder="Search by student name, ID, exam, subject, or status"
+                    />
+                </div>
 
                 <div className="table-wrapper">
                     <table>
@@ -271,7 +290,7 @@ export default function AdminRecordings() {
                             </tr>
                         </thead>
                         <tbody>
-                            {recordings.map((recording) => (
+                            {filteredRecordings.map((recording) => (
                                 <tr key={recording._id}>
                                     <td style={{ fontWeight: 700 }}>{recording.studentName || 'Unknown Student'}</td>
                                     <td>{recording.studentId}</td>
@@ -312,10 +331,10 @@ export default function AdminRecordings() {
                                 </tr>
                             ))}
 
-                            {!tableLoading && recordings.length === 0 && (
+                            {!tableLoading && filteredRecordings.length === 0 && (
                                 <tr>
                                     <td colSpan="7" className="text-center text-muted" style={{ padding: 40 }}>
-                                        No recordings found for the selected filters.
+                                        {recordings.length === 0 ? 'No recordings found for the selected filters.' : 'No recordings match your search.'}
                                     </td>
                                 </tr>
                             )}

@@ -22,14 +22,22 @@ export function useTTS() {
             setVoices(englishVoices);
 
             if (englishVoices.length > 0) {
-                // Prefer Google or Microsoft Natural voices
-                const preferred = englishVoices.find(v =>
-                    v.name.includes('Google') ||
-                    v.name.includes('Natural') ||
-                    v.name.includes('Microsoft')
-                ) || englishVoices[0];
+                // Prefer female voices — look for common female voice names
+                const femaleKeywords = ['female', 'zira', 'hazel', 'susan', 'jenny', 'aria', 'sara', 'libby', 'sonia', 'emma', 'amy', 'joanna', 'samantha', 'karen', 'moira', 'tessa', 'flo'];
+                
+                const femaleVoice = englishVoices.find(v => {
+                    const name = v.name.toLowerCase();
+                    return femaleKeywords.some(k => name.includes(k));
+                });
 
-                setSelectedVoice(preferred);
+                // Fallback: prefer Google/Microsoft Natural female voices
+                const naturalFemale = englishVoices.find(v => {
+                    const name = v.name.toLowerCase();
+                    return (name.includes('google') || name.includes('natural')) && 
+                           !name.includes('male') && !name.includes('guy') && !name.includes('david') && !name.includes('mark') && !name.includes('james') && !name.includes('ryan');
+                });
+
+                setSelectedVoice(femaleVoice || naturalFemale || englishVoices[0]);
             }
         };
 

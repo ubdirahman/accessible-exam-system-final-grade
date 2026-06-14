@@ -1,11 +1,16 @@
 import { Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { getDefaultRouteForRole, normalizeRole, useAuth } from '../context/AuthContext';
 
 export default function ProtectedRoute({ children, role, roles }) {
-    const { isAuthenticated, user, loading, isAdminOrTeacher, logout } = useAuth();
+    const { isAuthenticated, user, loading, isAdminOrTeacher } = useAuth();
+    const normalizedRole = normalizeRole(user?.role);
+    const normalizedRequiredRole = normalizeRole(role);
+    const normalizedRequiredRoles = Array.isArray(roles)
+        ? roles.map((item) => normalizeRole(item)).filter(Boolean)
+        : [];
+    const fallbackRoute = getDefaultRouteForRole(normalizedRole) || '/';
 
-    // during initial auth check we don't render anything busy state
+    // While auth is loading, show loading state instead of navigating
     if (loading) {
         return (
             <div className="loading-page">
@@ -15,39 +20,33 @@ export default function ProtectedRoute({ children, role, roles }) {
         );
     }
 
-    // side‑effect: if we somehow end up authenticated without a role clear the session
-    // and let the subsequent render perform the navigation. doing this in a useEffect
-    // prevents a state update during render which caused the "maximum update depth"
-    // warning (logout() triggers state change and triggered ProtectedRoute again).
-    useEffect(() => {
-        if (isAuthenticated && !user?.role) {
-            console.warn('Authenticated user has no role, clearing session');
-            logout && logout();
-        }
-    }, [isAuthenticated, user?.role, logout]);
-
+    // If not authenticated after loading completes, redirect to login
     if (!isAuthenticated) {
         return <Navigate to="/" replace />;
     }
 
-    // after the effect runs the auth state will be reset; short‑circuit until that
-    // happens so we don't try to evaluate additional role checks on a bogus user.
-    if (!user?.role) {
-        return null;
-    }
-
-    // single role value (legacy) or multiple roles
-    if (role && user?.role !== role) {
-        return <Navigate to="/" replace />;
-    }
-    if (roles && !roles.includes(user?.role)) {
+    // If authenticated but missing role (edge case), return null
+    // Don't call logout here as it causes state updates that trigger infinite loops
+    if (!normalizedRole) {
+        console.warn('Authenticated user has no role');
         return <Navigate to="/" replace />;
     }
 
-    // special shorthand for admin/teacher combos
+    // Enforce single role requirement
+    if (normalizedRequiredRole && normalizedRole !== normalizedRequiredRole) {
+        return <Navigate to={fallbackRoute} replace />;
+    }
+
+    // Enforce multiple roles requirement (array of roles)
+    if (normalizedRequiredRoles.length > 0 && !normalizedRequiredRoles.includes(normalizedRole)) {
+        return <Navigate to={fallbackRoute} replace />;
+    }
+
+    // Enforce special admin/teacher combo check
     if (roles === 'adminOrTeacher' && !isAdminOrTeacher) {
-        return <Navigate to="/" replace />;
+        return <Navigate to={fallbackRoute} replace />;
     }
 
+    // All checks passed - render protected component
     return children;
 }
