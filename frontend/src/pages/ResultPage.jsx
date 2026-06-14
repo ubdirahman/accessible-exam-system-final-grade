@@ -5,6 +5,7 @@ import { useExam } from '../context/ExamContext';
 import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
+import useConfirmDialog from '../hooks/useConfirmDialog';
 
 function joinNamesForSpeech(names = []) {
     if (!names.length) return 'none';
@@ -19,6 +20,9 @@ export default function ResultPage() {
     const { speak } = useTTS();
     const navigate = useNavigate();
 
+    const [confirmLogoutPending, setConfirmLogoutPending] = useState(false);
+    const { confirmDialog, askConfirm, triggerConfirm, triggerCancel } = useConfirmDialog();
+
     const [details, setDetails] = useState(result?.details);
     const [latestResult, setLatestResult] = useState(result);
     const [queueData, setQueueData] = useState(null);
@@ -32,10 +36,25 @@ export default function ResultPage() {
         .map((entry) => entry.subjectName);
 
     const handleLogout = useCallback(async () => {
-        await resetExamSession({ recordingStatus: 'stopped' });
-        logout();
-        navigate('/');
-    }, [logout, navigate, resetExamSession]);
+        setConfirmLogoutPending(true);
+        speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+        const confirmed = await askConfirm({
+            title: 'Logout Confirmation',
+            message: 'Are you sure you want to log out of the system?',
+            confirmText: 'Yes, Logout',
+            cancelText: 'Cancel',
+            type: 'warning'
+        });
+        if (confirmed) {
+            setConfirmLogoutPending(false);
+            await resetExamSession({ recordingStatus: 'stopped' });
+            logout();
+            navigate('/');
+        } else {
+            setConfirmLogoutPending(false);
+            speak('Logout cancelled.', { rate: 1.0 });
+        }
+    }, [askConfirm, logout, navigate, resetExamSession, speak]);
 
     const readDetails = useCallback(() => {
         const list = details || showResult?.details;
@@ -136,22 +155,79 @@ export default function ResultPage() {
         loadPageData();
     }, [exam, user?.examId, user?.studentId]);
 
+    const handleAffirmative = useCallback(() => {
+        if (confirmLogoutPending) {
+            triggerConfirm();
+        }
+    }, [confirmLogoutPending, triggerConfirm]);
+
+    const handleNegative = useCallback(() => {
+        if (confirmLogoutPending) {
+            triggerCancel();
+        }
+    }, [confirmLogoutPending, triggerCancel]);
+
     const commandMap = {
         'read feedback': () => readDetails(),
         'read details': () => readDetails(),
         'read questions': () => readDetails(),
         'eeg faahfaahinta': () => readDetails(),
+        'read feedback again': () => readDetails(),
+        'read details again': () => readDetails(),
         'akhri natiijada': () => speakResultSummary(false),
         'read results': () => speakResultSummary(false),
         'read summary': () => speakResultSummary(false),
+        'read results again': () => speakResultSummary(false),
+        'read summary again': () => speakResultSummary(false),
         'next exam': () => speakQueueSummary(),
         'remaining subjects': () => speakQueueSummary(),
         'dashboard': () => navigate('/student/dashboard'),
         'go to dashboard': () => navigate('/student/dashboard'),
+        'go back to dashboard': () => navigate('/student/dashboard'),
+        'back to dashboard': () => navigate('/student/dashboard'),
+        'download pdf report': () => handleDownloadPDF(),
+        'download pdf': () => handleDownloadPDF(),
+        'download report': () => handleDownloadPDF(),
+        'save pdf': () => handleDownloadPDF(),
+        'save report': () => handleDownloadPDF(),
+        'yes': handleAffirmative,
+        'haa': handleAffirmative,
+        'no': handleNegative,
+        'maya': handleNegative,
         'logout': () => handleLogout(),
         'log out': () => handleLogout(),
         'sign out': () => handleLogout(),
-        'exit': () => handleLogout()
+        'exit': () => handleLogout(),
+        'logout system': () => handleLogout(),
+        'sign out of system': () => handleLogout(),
+        'try': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakResultSummary(false);
+            }
+        },
+        'again': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakResultSummary(false);
+            }
+        },
+        'try again': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakResultSummary(false);
+            }
+        },
+        'repeat': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakResultSummary(false);
+            }
+        }
     };
     const { startListening, stopListening } = useVoiceCommands(commandMap, true);
 
@@ -319,6 +395,7 @@ export default function ResultPage() {
                     </button>
                 </div>
             </div>
+            {confirmDialog}
         </div>
     );
 }

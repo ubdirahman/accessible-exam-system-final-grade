@@ -68,5 +68,5 @@ export default function useConfirmDialog() {
         />
     );
 
-    return { confirmDialog, askConfirm };
+    return { confirmDialog, askConfirm, triggerConfirm: handleConfirm, triggerCancel: handleCancel };
 }

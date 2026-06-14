@@ -5,6 +5,7 @@ import { useExam } from '../context/ExamContext';
 import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
+import useConfirmDialog from '../hooks/useConfirmDialog';
 
 function joinNamesForSpeech(names = []) {
     if (!names.length) return 'none';
@@ -33,6 +34,8 @@ export default function StudentDashboard() {
     const [waitingStart, setWaitingStart] = useState(false);
     const [waitingRepeat, setWaitingRepeat] = useState(false);
     const [confirmStartPending, setConfirmStartPending] = useState(false);
+    const [confirmLogoutPending, setConfirmLogoutPending] = useState(false);
+    const { confirmDialog, askConfirm, triggerConfirm, triggerCancel } = useConfirmDialog();
 
     const currentExam = queueData?.currentExam || null;
     const exams = queueData?.exams || [];
@@ -41,10 +44,25 @@ export default function StudentDashboard() {
     const latestCompletedExam = getLatestCompletedExam(exams);
 
     const handleLogout = useCallback(async () => {
-        await resetExamSession({ recordingStatus: 'stopped' });
-        logout();
-        navigate('/');
-    }, [logout, navigate, resetExamSession]);
+        setConfirmLogoutPending(true);
+        speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+        const confirmed = await askConfirm({
+            title: 'Logout Confirmation',
+            message: 'Are you sure you want to log out of the system?',
+            confirmText: 'Yes, Logout',
+            cancelText: 'Cancel',
+            type: 'warning'
+        });
+        if (confirmed) {
+            setConfirmLogoutPending(false);
+            await resetExamSession({ recordingStatus: 'stopped' });
+            logout();
+            navigate('/');
+        } else {
+            setConfirmLogoutPending(false);
+            speak('Logout cancelled.', { rate: 1.0 });
+        }
+    }, [askConfirm, logout, navigate, resetExamSession, speak]);
 
     const loadDashboardData = useCallback(async () => {
         setLoading(true);
@@ -208,6 +226,11 @@ export default function StudentDashboard() {
     }
 
     const handleAffirmative = useCallback(() => {
+        if (confirmLogoutPending) {
+            triggerConfirm();
+            return;
+        }
+
         if (waitingStart && confirmStartPending) {
             setWaitingStart(false);
             setConfirmStartPending(false);
@@ -219,26 +242,37 @@ export default function StudentDashboard() {
             setWaitingRepeat(false);
             speakDashboardSummary(!!currentExam);
         }
-    }, [confirmStartPending, currentExam, speakDashboardSummary, waitingRepeat, waitingStart]);
+    }, [confirmLogoutPending, triggerConfirm, confirmStartPending, currentExam, speakDashboardSummary, waitingRepeat, waitingStart]);
 
     const handleNegative = useCallback(() => {
+        if (confirmLogoutPending) {
+            triggerCancel();
+            return;
+        }
+
         if (waitingStart || waitingRepeat) {
             setWaitingStart(false);
             setConfirmStartPending(false);
             setWaitingRepeat(true);
             speak('Okay. Say repeat summary to hear your exam plan again, or say logout when you are ready.', { rate: 1.0 });
         }
-    }, [speak, waitingRepeat, waitingStart]);
+    }, [confirmLogoutPending, triggerCancel, speak, waitingRepeat, waitingStart]);
 
     const commandMap = {
         'start exam': () => requestStartConfirmation(),
         'begin exam': () => requestStartConfirmation(),
         'start': () => requestStartConfirmation(),
-        'repeat instructions': () => speakDashboardSummary(!!currentExam),
+        'start next exam': () => requestStartConfirmation(),
+        'begin next exam': () => requestStartConfirmation(),
+        'take exam': () => requestStartConfirmation(),
+        'go to exam': () => requestStartConfirmation(),
+        'repeat instructions': () => speakDashboardSummary(...[!!currentExam]),
         'repeat summary': () => speakDashboardSummary(false),
         'repeat dashboard': () => speakDashboardSummary(false),
         'dashboard summary': () => speakDashboardSummary(false),
         'read summary': () => speakDashboardSummary(false),
+        'tell me summary': () => speakDashboardSummary(false),
+        'tell summary': () => speakDashboardSummary(false),
         'how many exams': () => speakDashboardSummary(false),
         'how many subjects': () => speakDashboardSummary(false),
         'current subject': () => {
@@ -261,6 +295,8 @@ export default function StudentDashboard() {
         'completed subjects': () => speakCompletedSubjects(),
         'refresh dashboard': () => loadDashboardData(),
         'reload dashboard': () => loadDashboardData(),
+        'refresh': () => loadDashboardData(),
+        'reload': () => loadDashboardData(),
         'help me': () => {
             speak(
                 currentExam
@@ -277,7 +313,45 @@ export default function StudentDashboard() {
         'logout': () => handleLogout(),
         'log out': () => handleLogout(),
         'sign out': () => handleLogout(),
-        'exit': () => handleLogout()
+        'exit': () => handleLogout(),
+        'logout system': () => handleLogout(),
+        'sign out of system': () => handleLogout(),
+        'try': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else if (confirmStartPending) {
+                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakDashboardSummary(false);
+            }
+        },
+        'again': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else if (confirmStartPending) {
+                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakDashboardSummary(false);
+            }
+        },
+        'try again': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else if (confirmStartPending) {
+                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakDashboardSummary(false);
+            }
+        },
+        'repeat': () => {
+            if (confirmLogoutPending) {
+                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+            } else if (confirmStartPending) {
+                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+            } else {
+                speakDashboardSummary(false);
+            }
+        }
     };
 
     const { isListening, startListening, stopListening } = useVoiceCommands(commandMap, true);
@@ -531,6 +605,7 @@ export default function StudentDashboard() {
                     </p>
                 </div>
             </div>
+            {confirmDialog}
         </div>
     );
 }

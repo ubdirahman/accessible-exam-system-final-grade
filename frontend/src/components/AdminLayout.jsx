@@ -3,12 +3,14 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
 import { useAutoUpdate } from '../hooks/useAutoUpdate';
+import useConfirmDialog from '../hooks/useConfirmDialog';
 
 export default function AdminLayout({ children }) {
     const { user, logout } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     const [myClass, setMyClass] = useState(null);
+    const { confirmDialog, askConfirm } = useConfirmDialog();
 
     const fetchClass = useCallback(async () => {
         if (user?.role === 'teacher' && user?.classId) {
@@ -26,9 +28,18 @@ export default function AdminLayout({ children }) {
     // Cusboonaysiin toos ah (Automatic Update) 30-kii ilbiriqsiba mar
     useAutoUpdate(fetchClass, 30000);
 
-    const handleLogout = () => {
-        logout();
-        navigate('/');
+    const handleLogout = async () => {
+        const confirmed = await askConfirm({
+            title: 'Logout Confirmation',
+            message: 'Are you sure you want to log out of the system?',
+            confirmText: 'Yes, Logout',
+            cancelText: 'Cancel',
+            type: 'warning'
+        });
+        if (confirmed) {
+            logout();
+            navigate('/');
+        }
     };
 
     const brandIcon = user?.role === 'teacher'
@@ -128,6 +139,7 @@ export default function AdminLayout({ children }) {
                     {children}
                 </main>
             </div>
+            {confirmDialog}
         </div>
     );
 }

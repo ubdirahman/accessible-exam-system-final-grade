@@ -522,6 +522,55 @@ export default function ExamPage() {
         }, DICTATION_CONFIRM_DELAY);
     }, [clearDictationTimer, currentQuestion, openEndedText, requestHelp, requestOpenEndedSaveConfirmation]);
 
+    const handleYes = () => {
+        if (showConfirm && pendingAnswer) {
+            confirmAnswer();
+            return;
+        }
+
+        if (waitingAnswerConfirm && currentQuestion?.type === 'open-ended') {
+            handleOpenEndedSubmit();
+            return;
+        }
+
+        if (waitingNextConfirm) {
+            setWaitingNextConfirm(false);
+            moveToNextQuestion();
+            return;
+        }
+
+        if (showFinishModal) {
+            handleFinish();
+        }
+    };
+
+    const handleNo = () => {
+        if (showConfirm && pendingAnswer) {
+            cancelAnswer();
+            return;
+        }
+
+        if (waitingAnswerConfirm) {
+            setWaitingAnswerConfirm(false);
+            announce('Okay. Keep editing your answer, or say clear answer to start over.', {
+                speakMessage: true,
+                assertive: true
+            });
+            openEndedInputRef.current?.focus();
+            return;
+        }
+
+        if (waitingNextConfirm) {
+            setWaitingNextConfirm(false);
+            announce('Staying on the current question.', { speakMessage: true, assertive: true });
+            return;
+        }
+
+        if (showFinishModal) {
+            closeFinishDialog();
+        }
+    };
+
     const commandMap = {
         __shouldMatchOption__: () => currentQuestion?.type !== 'open-ended',
         next: () => {
@@ -532,19 +581,33 @@ export default function ExamPage() {
             setWaitingNextConfirm(false);
             moveToNextQuestion();
         },
+        'next question': () => {
+            setWaitingNextConfirm(false);
+            moveToNextQuestion();
+        },
         previous: () => moveToPreviousQuestion(),
         back: () => moveToPreviousQuestion(),
         hore: () => moveToPreviousQuestion(),
+        'previous question': () => moveToPreviousQuestion(),
         again: () => readCurrentQuestion(),
+        try: () => readCurrentQuestion(),
+        'try again': () => readCurrentQuestion(),
+        repeat: () => readCurrentQuestion(),
         'repeat question': () => readCurrentQuestion(),
+        'repeat question again': () => readCurrentQuestion(),
         'ku celi': () => readCurrentQuestion(),
         'soo celi': () => readCurrentQuestion(),
         help: () => readAccessibilityHelp(),
         'help me': () => readAccessibilityHelp(),
         caawi: () => readAccessibilityHelp(),
         'question help': () => requestHelp('Please explain this question in simpler words.'),
+        'ai explanation': () => requestHelp('Please explain this question in simpler words.'),
+        'ai help': () => requestHelp('Please explain this question in simpler words.'),
+        'explanation': () => requestHelp('Please explain this question in simpler words.'),
+        'explain': () => requestHelp('Please explain this question in simpler words.'),
         'review unanswered': () => jumpToFirstUnanswered(),
         'submit exam': () => handleFinish(),
+        'submit': () => openFinishDialog(),
         'stop reading': () => {
             stopTTS();
             announce('Speech stopped.', { toast: true, assertive: true });
@@ -558,50 +621,14 @@ export default function ExamPage() {
         'clear answer': () => clearOpenEndedAnswer(),
         'tir tir': () => clearOpenEndedAnswer(),
         'tir-tir': () => clearOpenEndedAnswer(),
-        yes: () => {
-            if (showConfirm && pendingAnswer) {
-                confirmAnswer();
-                return;
-            }
-
-            if (waitingAnswerConfirm && currentQuestion?.type === 'open-ended') {
-                handleOpenEndedSubmit();
-                return;
-            }
-
-            if (waitingNextConfirm) {
-                setWaitingNextConfirm(false);
-                moveToNextQuestion();
-                return;
-            }
-
-            if (showFinishModal) {
-                handleFinish();
-            }
-        },
-        no: () => {
+        yes: handleYes,
+        haa: handleYes,
+        no: handleNo,
+        maya: handleNo,
+        cancel: () => {
             if (showConfirm && pendingAnswer) {
                 cancelAnswer();
-                return;
-            }
-
-            if (waitingAnswerConfirm) {
-                setWaitingAnswerConfirm(false);
-                announce('Okay. Keep editing your answer, or say clear answer to start over.', {
-                    speakMessage: true,
-                    assertive: true
-                });
-                openEndedInputRef.current?.focus();
-                return;
-            }
-
-            if (waitingNextConfirm) {
-                setWaitingNextConfirm(false);
-                announce('Staying on the current question.', { speakMessage: true, assertive: true });
-                return;
-            }
-
-            if (showFinishModal) {
+            } else if (showFinishModal) {
                 closeFinishDialog();
             }
         }

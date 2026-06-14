@@ -39,7 +39,7 @@ export default function LoginPage() {
     const { login } = useAuth();
     const { ensureExamRecording } = useExam();
     const navigate = useNavigate();
-    const { speak } = useTTS();
+    const { speak, stop } = useTTS();
 
     useEffect(() => {
         voiceStepRef.current = voiceStep;
@@ -420,40 +420,83 @@ export default function LoginPage() {
             'finish guided entry': () => promptStudentIdConfirmation(studentIdRef.current),
             'stop guided entry': () => stopGuidedEntry(),
             'exit guided entry': () => stopGuidedEntry(),
+            'exit guided': () => stopGuidedEntry(),
+            'exit guided mode': () => stopGuidedEntry(),
+            'stop guided': () => stopGuidedEntry(),
+            'start guided': () => startGuidedEntry(false),
+            'toggle guided': () => guidedEntryMode ? stopGuidedEntry() : startGuidedEntry(false),
             'delete last': () => deleteLastStudentIdCharacter(),
             'remove last': () => deleteLastStudentIdCharacter(),
             'backspace': () => deleteLastStudentIdCharacter(),
+            'delete last character': () => deleteLastStudentIdCharacter(),
+            'delete last letter': () => deleteLastStudentIdCharacter(),
+            'delete last number': () => deleteLastStudentIdCharacter(),
+            'remove last character': () => deleteLastStudentIdCharacter(),
+            'remove last letter': () => deleteLastStudentIdCharacter(),
+            'remove last number': () => deleteLastStudentIdCharacter(),
             'clear id': () => clearCurrentStudentId(),
             'clear': () => clearCurrentStudentId(),
             'start over': () => clearCurrentStudentId(),
+            'clear student id': () => clearCurrentStudentId(),
+            'clear all': () => clearCurrentStudentId(),
+            'reset': () => clearCurrentStudentId(),
+            'reset id': () => clearCurrentStudentId(),
             'continue': () => promptStudentIdConfirmation(studentIdRef.current),
             'done': () => promptStudentIdConfirmation(studentIdRef.current),
             'login': () => promptStudentIdConfirmation(studentIdRef.current),
             'enter exam': () => promptStudentIdConfirmation(studentIdRef.current),
+            'continue with id': () => promptStudentIdConfirmation(studentIdRef.current),
+            'confirm and login': () => promptStudentIdConfirmation(studentIdRef.current),
+            'save confirmed id': () => saveStudentIdOnly(studentIdRef.current),
             'use last id': () => useLastSavedStudentId(),
-            'last id': () => useLastSavedStudentId()
+            'last id': () => useLastSavedStudentId(),
+            'use last student id': () => useLastSavedStudentId(),
+            'use saved id': () => useLastSavedStudentId(),
+            'use last saved id': () => useLastSavedStudentId(),
+            'load last id': () => useLastSavedStudentId(),
+            'load saved id': () => useLastSavedStudentId(),
+            'repeat': () => readCurrentStudentId(),
+            'again': () => readCurrentStudentId(),
+            'try': () => readCurrentStudentId(),
+            'try again': () => clearCurrentStudentId('Student I D cleared. Try spelling it again.'),
+            'student login': () => { setMode('student'); setError(''); },
+            'admin login': () => { setMode('admin'); setError(''); },
+            'teacher login': () => { setMode('teacher'); setError(''); },
+            'admin tab': () => { setMode('admin'); setError(''); },
+            'teacher tab': () => { setMode('teacher'); setError(''); },
+            'student tab': () => { setMode('student'); setError(''); }
         };
 
         if (voiceStep === 'CONFIRM_ID') {
+            const handleConfirmYes = () => {
+                if (idConfirmationMode === 'save') {
+                    saveStudentIdOnly(studentIdRef.current);
+                    return;
+                }
+                performStudentLogin(studentIdRef.current);
+            };
+
+            const handleConfirmNo = () => {
+                if (idConfirmationMode === 'save') {
+                    clearCurrentStudentId('Okay. I cleared the student I D. Please start the student I D again from the beginning.');
+                    return;
+                }
+                setVoiceStep('LISTENING_ID');
+                setIdConfirmationMode('login');
+                markStudentIdActivity();
+                readCurrentStudentId('Okay. Keep editing. Current student I D is');
+            };
+
             return {
                 ...baseCommands,
-                'yes': () => {
-                    if (idConfirmationMode === 'save') {
-                        saveStudentIdOnly(studentIdRef.current);
-                        return;
-                    }
-                    performStudentLogin(studentIdRef.current);
-                },
-                'no': () => {
-                    if (idConfirmationMode === 'save') {
-                        clearCurrentStudentId('Okay. I cleared the student I D. Please start the student I D again from the beginning.');
-                        return;
-                    }
-                    setVoiceStep('LISTENING_ID');
-                    setIdConfirmationMode('login');
-                    markStudentIdActivity();
-                    readCurrentStudentId('Okay. Keep editing. Current student I D is');
-                }
+                'yes': handleConfirmYes,
+                'haa': handleConfirmYes,
+                'no': handleConfirmNo,
+                'maya': handleConfirmNo,
+                'try': () => promptStudentIdConfirmation(studentIdRef.current),
+                'again': () => promptStudentIdConfirmation(studentIdRef.current),
+                'repeat': () => promptStudentIdConfirmation(studentIdRef.current),
+                'try again': () => clearCurrentStudentId('Okay, started again. Spell your student I D now.')
             };
         }
 
@@ -497,9 +540,10 @@ export default function LoginPage() {
         } else {
             setGuidedEntryMode(false);
             stopListening();
+            stop();
             setVoiceStep('IDLE');
         }
-    }, [focusStudentInput, mode, speakAndListen, stopListening]);
+    }, [focusStudentInput, mode, speakAndListen, stopListening, stop]);
 
     useEffect(() => {
         if (mode !== 'student' || loading || voiceStep !== 'LISTENING_ID') return undefined;
