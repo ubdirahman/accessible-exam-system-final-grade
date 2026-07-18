@@ -8,10 +8,10 @@
 
 :root {
   /* Core palette — Premium Light Theme (Default) */
-  --bg-primary: #eef8ff;
-  --bg-secondary: #dff1ff;
-  --bg-card: #f9fdff;
-  --bg-hover: #cfe9ff;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f6f9;
+  --bg-card: #ffffff;
+  --bg-hover: #eaeef3;
   --bg-input: #ffffff;
 
   --text-primary: #0d2b45;
@@ -34,7 +34,7 @@
   --danger-bg: rgba(220, 38, 38, 0.1);
   --info: #198fdd;
 
-  --border: #b9daf2;
+  --border: #dee2e6;
   --border-focus: #1e88e5;
 
   --radius: 12px;
@@ -95,9 +95,7 @@ html {
 
 body {
   font-family: var(--font);
-  background:
-    radial-gradient(circle at top left, rgba(82, 182, 255, 0.22), transparent 32%),
-    linear-gradient(180deg, #f4fbff 0%, var(--bg-primary) 100%);
+  background: #ffffff;
   color: var(--text-primary);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
@@ -801,10 +799,6 @@ td {
   }
 }
 
-tr:hover td {
-  background: var(--bg-hover);
-}
-
 /* ======================================================
    Timer
    ====================================================== */
@@ -846,8 +840,7 @@ tr:hover td {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(8, 34, 60, 0.34);
-  backdrop-filter: blur(4px);
+  background: #f1f5f9;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -880,7 +873,6 @@ tr:hover td {
 .modal-actions {
   display: flex;
   flex-direction: column;
-  /* Stack on mobile */
   gap: 12px;
   margin-top: 24px;
 }
@@ -891,10 +883,6 @@ tr:hover td {
     justify-content: flex-end;
   }
 }
-
-/* ======================================================
-   Section tabs
-   ====================================================== */
 .section-tabs {
   display: flex;
   gap: 8px;

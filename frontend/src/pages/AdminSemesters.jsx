@@ -5,8 +5,8 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
-const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
+// Only allow letters (Latin + Arabic/Somali), numbers, and spaces in name fields
+const nameOnly = (val) => val.replace(/[^a-zA-Z0-9\s\u0600-\u06FF\-']/g, '');
 
 export default function AdminSemesters() {
     const { user } = useAuth();
@@ -88,6 +88,25 @@ export default function AdminSemesters() {
         e.preventDefault();
         setTouched({ name: true });
         if (isNameEmpty()) return;
+
+        const isPastDate = (dateStr) => {
+            if (!dateStr) return false;
+            const inputDate = new Date(dateStr);
+            inputDate.setHours(0, 0, 0, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return inputDate < today;
+        };
+
+        if (isPastDate(form.startDate)) {
+            setError('Start date cannot be in the past.');
+            return;
+        }
+        if (isPastDate(form.endDate)) {
+            setError('End date cannot be in the past.');
+            return;
+        }
+
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         if (!facultyId) return setError('Select a faculty first.');
         try {
@@ -95,6 +114,7 @@ export default function AdminSemesters() {
             setForm({ name: '', startDate: '', endDate: '' });
             setShowAddForm(false);
             setTouched({});
+            setError('');
             loadSemesters(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to create semester');
@@ -139,10 +159,34 @@ export default function AdminSemesters() {
     const saveEdit = async (e) => {
         e.stopPropagation();
         if (!editForm.name?.trim()) return;
+
+        const isPastDate = (dateStr) => {
+            if (!dateStr) return false;
+            const inputDate = new Date(dateStr);
+            inputDate.setHours(0, 0, 0, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return inputDate < today;
+        };
+
+        const existing = semesters.find(s => s._id === editingId);
+        const startChanged = editForm.startDate !== (existing?.startDate ? new Date(existing.startDate).toISOString().split('T')[0] : '');
+        const endChanged = editForm.endDate !== (existing?.endDate ? new Date(existing.endDate).toISOString().split('T')[0] : '');
+
+        if (startChanged && isPastDate(editForm.startDate)) {
+            setError('Start date cannot be in the past.');
+            return;
+        }
+        if (endChanged && isPastDate(editForm.endDate)) {
+            setError('End date cannot be in the past.');
+            return;
+        }
+
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         try {
             await api.put(`/semesters/${editingId}`, { ...editForm, facultyId });
             setEditingId(null);
+            setError('');
             loadSemesters(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to save semester');

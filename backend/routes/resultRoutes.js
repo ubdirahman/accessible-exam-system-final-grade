@@ -350,7 +350,12 @@ router.get('/:studentId/:examId/pdf', verifyToken, async (req, res) => {
         if (!result) return res.status(404).json({ message: 'Result not found.' });
 
         const exam = await Exam.findById(examId);
-        const student = await Student.findOne({ studentId });
+        const student = await Student.findOne({ studentId })
+            .populate('facultyId')
+            .populate({
+                path: 'classId',
+                populate: { path: 'semesterId' }
+            });
         const questions = await Question.find({ examId });
         const responses = await Response.find({ studentId, examId });
 

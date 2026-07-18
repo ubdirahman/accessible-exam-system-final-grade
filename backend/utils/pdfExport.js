@@ -1,4 +1,6 @@
 const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * Generate a PDF report for an exam result
@@ -6,104 +8,302 @@ const PDFDocument = require('pdfkit');
 function generateResultPDF({ student, exam, result, questions, responses }) {
     return new Promise((resolve, reject) => {
         try {
-            const doc = new PDFDocument({ margin: 50 });
+            const doc = new PDFDocument({ margin: 40, size: 'A4' });
             const buffers = [];
+            
+            const logoPath = path.join(__dirname, 'logo.png');
+            
+            // Register page decorations function
+            const drawPageDecorations = (d) => {
+                const width = d.page.width;
+                const height = d.page.height;
+                
+                // Bottom-left blue triangle
+                d.save();
+                d.fillColor('#2563eb');
+                d.moveTo(0, height);
+                d.lineTo(0, height - 45);
+                d.lineTo(45, height);
+                d.closePath();
+                d.fill();
+                
+                // Bottom-right blue triangle
+                d.moveTo(width, height);
+                d.lineTo(width, height - 45);
+                d.lineTo(width - 45, height);
+                d.closePath();
+                d.fill();
+                d.restore();
+                
+                // Running footer text
+                d.save();
+                const oldBottomMargin = d.page.margins.bottom;
+                d.page.margins.bottom = 0; // Temporarily disable bottom margin to prevent automatic page breaks
+                d.fillColor('#94a3b8').font('Helvetica').fontSize(8);
+                d.text('Jamhuriya University of Science and Technology (JUST) — Student Exam Result', 0, height - 25, {
+                    align: 'center',
+                    width: width
+                });
+                d.page.margins.bottom = oldBottomMargin;
+                d.restore();
+            };
 
             doc.on('data', (chunk) => buffers.push(chunk));
             doc.on('end', () => resolve(Buffer.concat(buffers)));
 
-            // Header
-            doc.fontSize(20).font('Helvetica-Bold').text('Exam Result Report', { align: 'center' });
-            doc.moveDown(0.5);
-            doc.fontSize(10).font('Helvetica').text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
-            doc.moveDown(1);
+            // Draw decorations on the first page
+            drawPageDecorations(doc);
+            doc.x = 40; // Ensure margin is reset
+            
+            // Listen for subsequent page additions
+            doc.on('pageAdded', () => {
+                drawPageDecorations(doc);
+                doc.x = 40;
+                doc.y = 50; // Set top offset for new pages
+            });
 
-            // Divider
-            doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#333333');
-            doc.moveDown(0.5);
+            // Draw Logo Banner
+            if (fs.existsSync(logoPath)) {
+                doc.image(logoPath, 40, 35, { width: 515 });
+            }
+            
+            // Exam Title (centered)
+            doc.y = 130;
+            doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(13)
+                .text(exam?.title || 'Exam Name and Years', { align: 'center', width: 515 });
+            doc.moveDown(0.8);
+            
+            // Student Info Underlined Fields
+            const r1Y = 160;
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#1e293b');
+            doc.text('Name', 40, r1Y);
+            doc.text('ID', 445, r1Y);
+            
+            doc.strokeColor('#cbd5e1').lineWidth(0.8)
+               .moveTo(75, r1Y + 10)
+               .lineTo(430, r1Y + 10)
+               .moveTo(462, r1Y + 10)
+               .lineTo(555, r1Y + 10)
+               .stroke();
+               
+            doc.font('Helvetica').fontSize(10).fillColor('#0f172a');
+            doc.text(student?.name || 'N/A', 80, r1Y);
+            doc.text(student?.studentId || 'N/A', 467, r1Y);
+            
+            const r2Y = 185;
+            doc.font('Helvetica-Bold').fontSize(10).fillColor('#1e293b');
+            doc.text('Class', 40, r2Y);
+            doc.text('Semister', 242, r2Y);
+            doc.text('Data', 445, r2Y);
+            
+            doc.strokeColor('#cbd5e1').lineWidth(0.8)
+               .moveTo(75, r2Y + 10)
+               .lineTo(230, r2Y + 10)
+               .moveTo(300, r2Y + 10)
+               .lineTo(430, r2Y + 10)
+               .moveTo(472, r2Y + 10)
+               .lineTo(555, r2Y + 10)
+               .stroke();
+               
+            doc.font('Helvetica').fontSize(10).fillColor('#0f172a');
+            doc.text(student?.classId?.name || student?.className || 'N/A', 80, r2Y);
+            doc.text(student?.classId?.semesterId?.name || 'N/A', 305, r2Y);
+            doc.text(new Date(result.submittedAt || exam.createdAt).toLocaleDateString(), 477, r2Y);
 
-            // Student Info
-            doc.fontSize(14).font('Helvetica-Bold').text('Student Information');
-            doc.moveDown(0.3);
-            doc.fontSize(11).font('Helvetica');
-            doc.text(`Name: ${student ? student.name : 'N/A'}`);
-            doc.text(`Student ID: ${student ? student.studentId : 'N/A'}`);
-            doc.moveDown(0.5);
-
-            // Exam Info
-            doc.fontSize(14).font('Helvetica-Bold').text('Exam Details');
-            doc.moveDown(0.3);
-            doc.fontSize(11).font('Helvetica');
-            doc.text(`Title: ${exam ? exam.title : 'N/A'}`);
-            doc.text(`Description: ${exam ? exam.description : 'N/A'}`);
-            doc.moveDown(0.5);
-
-            // Results Summary
-            doc.fontSize(14).font('Helvetica-Bold').text('Results Summary');
-            doc.moveDown(0.3);
-            doc.fontSize(11).font('Helvetica');
-
+            // Score Summary Box
             const percentage = result.totalPoints > 0
                 ? Math.round((result.score / result.totalPoints) * 100)
                 : 0;
-
-            doc.text(`Score: ${result.score} / ${result.totalPoints} (${percentage}%)`);
-            doc.text(`Correct: ${result.correctCount}`);
-            doc.text(`Wrong: ${result.wrongCount}`);
-            doc.text(`Skipped: ${result.skippedCount}`);
-
-            const mins = Math.floor(result.timeTaken / 60);
-            const secs = result.timeTaken % 60;
-            doc.text(`Time Taken: ${mins} min ${secs} sec`);
-            doc.text(`Status: ${percentage >= 50 ? 'PASSED' : 'FAILED'}`);
-            doc.moveDown(1);
-
-            // Divider
-            doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#333333');
-            doc.moveDown(0.5);
-
-            // Question Details
-            doc.fontSize(14).font('Helvetica-Bold').text('Question Details');
-            doc.moveDown(0.5);
-
-            questions.forEach((q, idx) => {
-                const resp = responses.find(r => r.questionId.toString() === q._id.toString());
-
-                // Check page space
-                if (doc.y > 680) {
+            const statusText = percentage >= 50 ? 'PASSED' : 'FAILED';
+            const statusColor = percentage >= 50 ? '#16a34a' : '#dc2626';
+            
+            const summaryY = 215;
+            doc.save();
+            doc.rect(40, summaryY, 515, 42)
+               .fillAndStroke('#f8fafc', '#e2e8f0');
+               
+            doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8);
+            doc.text('TOTAL SCORE', 45, summaryY + 8, { width: 100, align: 'center' });
+            doc.text('PERCENTAGE', 145, summaryY + 8, { width: 100, align: 'center' });
+            doc.text('CORRECT/WRONG', 245, summaryY + 8, { width: 100, align: 'center' });
+            doc.text('TIME TAKEN', 345, summaryY + 8, { width: 100, align: 'center' });
+            doc.text('STATUS', 445, summaryY + 8, { width: 100, align: 'center' });
+            
+            doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(10);
+            doc.text(`${result.score} / ${result.totalPoints}`, 45, summaryY + 22, { width: 100, align: 'center' });
+            doc.text(`${percentage}%`, 145, summaryY + 22, { width: 100, align: 'center' });
+            doc.text(`${result.correctCount} / ${result.wrongCount}`, 245, summaryY + 22, { width: 100, align: 'center' });
+            doc.text(`${Math.floor(result.timeTaken / 60)}m ${result.timeTaken % 60}s`, 345, summaryY + 22, { width: 100, align: 'center' });
+            doc.fillColor(statusColor).text(statusText, 445, summaryY + 22, { width: 100, align: 'center' });
+            doc.restore();
+            
+            doc.x = 40; // Reset X position to avoid grid width inheritance
+            doc.y = summaryY + 55;
+            
+            // Question grouping
+            const mcqs = questions.filter(q => q.type === 'mcq');
+            const tfs = questions.filter(q => q.type === 'true-false');
+            const opens = questions.filter(q => q.type === 'open-ended');
+            
+            const checkPageBreak = (neededHeight = 60) => {
+                if (doc.y > doc.page.height - doc.page.margins.bottom - neededHeight) {
                     doc.addPage();
+                    doc.x = 40;
+                    doc.y = 50; // top padding on new pages
                 }
+            };
 
-                doc.fontSize(11).font('Helvetica-Bold').text(`Q${idx + 1}. ${q.questionText}`);
-                doc.fontSize(10).font('Helvetica');
-                doc.text(`Type: ${q.type} | Points: ${q.points}`);
-
-                if (q.options && q.options.length > 0) {
-                    q.options.forEach(opt => {
-                        doc.text(`  ${opt.label}) ${opt.text}`);
-                    });
-                }
-
-                if (resp && resp.selectedAnswer) {
-                    doc.text(`Your Answer: ${resp.selectedAnswer}`);
-                    if (q.type !== 'open-ended' && q.correctAnswer) {
-                        doc.text(`Correct Answer: ${q.correctAnswer}`);
+            const mapTF = (val) => val === 'A' ? 'True' : (val === 'B' ? 'False' : val);
+            
+            let globalQIndex = 1;
+            
+            // Part A: MCQ
+            if (mcqs.length > 0) {
+                checkPageBreak(40);
+                doc.x = 40;
+                doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(13)
+                   .text('Part A: Multiple Choice Questions (Choose the correct answer)', { width: 515, align: 'left' });
+                doc.moveDown(0.4);
+                
+                mcqs.forEach((q) => {
+                    const resp = responses.find(r => r.questionId.toString() === q._id.toString());
+                    
+                    checkPageBreak(70);
+                    const currentY = doc.y;
+                    
+                    // Points in the left margin (x = 40)
+                    doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(13)
+                       .text(`(${q.points} pt${q.points > 1 ? 's' : ''})`, 40, currentY, { width: 45, align: 'left' });
+                       
+                    // Question text (x = 90)
+                    doc.fillColor('#1e293b').font('Helvetica-Bold').fontSize(13)
+                       .text(`${globalQIndex++}. ${q.questionText}`, 90, currentY, { width: 465, align: 'left' });
+                    doc.moveDown(0.1);
+                    
+                    doc.x = 90;
+                    
+                    // Options
+                    if (q.options && q.options.length > 0) {
+                        const optStrings = q.options.map(opt => `${opt.label}. ${opt.text}`);
+                        const joinedOpts = optStrings.join('    ');
+                        doc.font('Helvetica').fontSize(13).fillColor('#475569');
+                        if (joinedOpts.length < 70) {
+                            doc.text(joinedOpts, { indent: 15, width: 465, align: 'left' });
+                        } else {
+                            q.options.forEach(opt => {
+                                doc.text(`${opt.label}. ${opt.text}`, { indent: 15, width: 465, align: 'left' });
+                            });
+                        }
+                        doc.moveDown(0.1);
                     }
-                    doc.text(`Result: ${resp.isCorrect ? '✓ Correct' : '✗ Incorrect'} (${resp.score || 0} pts)`);
-                    if (resp.mlFeedback) {
-                        doc.text(`ML Feedback: ${resp.mlFeedback}`);
+                    
+                    // Answer
+                    doc.font('Helvetica-Bold').fontSize(13).fillColor('#1e293b')
+                       .text('Answer: ', { indent: 15, continued: true, width: 465 });
+                    
+                    const answerLabel = resp?.selectedAnswer || '(Skipped)';
+                    let answerText = answerLabel;
+                    if (q.options) {
+                        const matchedOpt = q.options.find(o => o.label === answerLabel);
+                        if (matchedOpt) answerText = `${answerLabel} (${matchedOpt.text})`;
                     }
-                } else {
-                    doc.text('Your Answer: (Skipped)');
-                }
-
+                    
+                    doc.font('Helvetica').fillColor('#1e293b').text(answerText, { indent: 15, width: 465, align: 'left' });
+                    
+                    doc.moveDown(0.5);
+                });
                 doc.moveDown(0.5);
-            });
-
-            // Footer
-            doc.moveDown(1);
-            doc.fontSize(9).font('Helvetica').fillColor('#666666')
-                .text('Accessible Digital Examination System — Confidential', { align: 'center' });
+            }
+            
+            // Part B: True/False
+            if (tfs.length > 0) {
+                checkPageBreak(40);
+                doc.x = 40;
+                doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(13)
+                   .text('Part B: True or False', { width: 515, align: 'left' });
+                doc.moveDown(0.4);
+                
+                tfs.forEach((q) => {
+                    const resp = responses.find(r => r.questionId.toString() === q._id.toString());
+                    
+                    checkPageBreak(60);
+                    const currentY = doc.y;
+                    
+                    // Points in the left margin (x = 40)
+                    doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(13)
+                       .text(`(${q.points} pt${q.points > 1 ? 's' : ''})`, 40, currentY, { width: 45, align: 'left' });
+                       
+                    // Question text (x = 90)
+                    doc.fillColor('#1e293b').font('Helvetica-Bold').fontSize(13)
+                       .text(`${globalQIndex++}. ${q.questionText}`, 90, currentY, { width: 465, align: 'left' });
+                    doc.moveDown(0.1);
+                    
+                    doc.x = 90;
+                    
+                    // Answer (TF does not show options!)
+                    doc.font('Helvetica-Bold').fontSize(13).fillColor('#1e293b')
+                       .text('Answer: ', { indent: 15, continued: true, width: 465 });
+                    
+                    const answerLabel = resp?.selectedAnswer;
+                    const answerText = answerLabel ? mapTF(answerLabel) : '(Skipped)';
+                    
+                    doc.font('Helvetica').fillColor('#1e293b').text(answerText, { indent: 15, width: 465, align: 'left' });
+                    
+                    doc.moveDown(0.5);
+                });
+                doc.moveDown(0.5);
+            }
+            
+            // Part C: Open-ended
+            if (opens.length > 0) {
+                checkPageBreak(40);
+                doc.x = 40;
+                doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(13)
+                   .text('Part C: Open Questions', { width: 515, align: 'left' });
+                doc.moveDown(0.4);
+                
+                opens.forEach((q) => {
+                    const resp = responses.find(r => r.questionId.toString() === q._id.toString());
+                    
+                    checkPageBreak(85);
+                    const currentY = doc.y;
+                    
+                    // Points in the left margin (x = 40)
+                    doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(13)
+                       .text(`(${q.points} pt${q.points > 1 ? 's' : ''})`, 40, currentY, { width: 45, align: 'left' });
+                       
+                    // Question text (x = 90)
+                    doc.fillColor('#1e293b').font('Helvetica-Bold').fontSize(13)
+                       .text(`${globalQIndex++}. ${q.questionText}`, 90, currentY, { width: 465, align: 'left' });
+                    doc.moveDown(0.1);
+                    
+                    doc.x = 90;
+                    
+                    doc.font('Helvetica-Bold').fontSize(13).fillColor('#1e293b')
+                       .text('Answer: ', { indent: 15, continued: true, width: 465 });
+                    
+                    doc.font('Helvetica').fillColor('#1e293b').text(resp?.selectedAnswer || '(No answer)', { indent: 15, width: 465, align: 'left' });
+                    
+                    if (resp) {
+                        doc.save();
+                        doc.fontSize(13).font('Helvetica-Bold');
+                        doc.fillColor('#1e293b').text(`Score: ${resp.score || 0} / ${q.points} pts`, { indent: 15, width: 465, align: 'left' });
+                        doc.restore();
+                        
+                        if (resp.mlFeedback) {
+                            doc.fontSize(13).fillColor('#475569').font('Helvetica-Oblique')
+                               .text(`ML Feedback: ${resp.mlFeedback}`, { indent: 15, width: 465, align: 'left' });
+                        }
+                        if (resp.teacherFeedback) {
+                            doc.fontSize(13).fillColor('#1e40af').font('Helvetica-Bold')
+                               .text('Teacher Feedback: ', { indent: 15, continued: true, width: 465 });
+                            doc.font('Helvetica').fillColor('#334155').text(resp.teacherFeedback);
+                        }
+                    }
+                    
+                    doc.moveDown(0.5);
+                });
+            }
 
             doc.end();
         } catch (error) {
@@ -111,6 +311,7 @@ function generateResultPDF({ student, exam, result, questions, responses }) {
         }
     });
 }
+
 
 function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
     return new Promise((resolve, reject) => {
@@ -131,28 +332,38 @@ function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
             };
 
             const renderPageHeader = () => {
-                doc.font('Helvetica-Bold').fontSize(18).fillColor('#111111')
-                    .text('Result Exam Report', 28, 24, { align: 'center' });
-                doc.moveDown(0.4);
-                doc.font('Helvetica').fontSize(10).fillColor('#555555');
-                doc.text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+                doc.fillColor('#111827').font('Helvetica-Bold').fontSize(18)
+                    .text('Accessible Exam System', 28, 24, { align: 'center' });
+                doc.moveDown(0.2);
+                doc.font('Helvetica').fontSize(12).fillColor('#475569')
+                    .text('Class Result Matrix', { align: 'center' });
+                doc.moveDown(0.3);
+                doc.font('Helvetica').fontSize(10).fillColor('#6b7280')
+                    .text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
                 doc.moveDown(0.5);
-                doc.text(`Faculty: ${faculty?.name || '-'}`, { align: 'left' });
-                doc.text(`Class: ${classroom?.name || '-'}${classroom?.semesterName ? ` | Semester: ${classroom.semesterName}` : ''}`, { align: 'left' });
+                doc.font('Helvetica-Bold').fontSize(11).fillColor('#1f2937')
+                    .text(`Faculty: ${faculty?.name || '-'}`, { align: 'left' });
+                doc.font('Helvetica').fontSize(10).fillColor('#374151')
+                    .text(`Class: ${classroom?.name || '-'}${classroom?.semesterName ? ` | Semester: ${classroom.semesterName}` : ''}`, { align: 'left' });
+                doc.moveDown(0.5);
+                doc.strokeColor('#d1d5db').lineWidth(1)
+                    .moveTo(doc.page.margins.left, doc.y)
+                    .lineTo(doc.page.width - doc.page.margins.right, doc.y)
+                    .stroke();
                 doc.moveDown(0.4);
             };
 
             const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
             const baseColumns = [
-                { key: 'name', label: 'Name', width: 120 },
-                { key: 'studentId', label: 'Student ID', width: 85 },
-                { key: 'facultyName', label: 'Faculty', width: 120 },
-                { key: 'className', label: 'Class', width: 95 },
-                { key: 'subjectCount', label: 'Subjects', width: 55 },
-                { key: 'totalScore', label: 'Total Score', width: 80 }
+                { key: 'name', label: 'Name', width: 140 },
+                { key: 'studentId', label: 'Student ID', width: 90 },
+                { key: 'facultyName', label: 'Faculty', width: 110 },
+                { key: 'className', label: 'Class', width: 100 },
+                { key: 'subjectCount', label: 'Subjects', width: 60 },
+                { key: 'totalScore', label: 'Total Score', width: 90 }
             ];
             const baseWidth = baseColumns.reduce((sum, column) => sum + column.width, 0);
-            const remainingWidth = Math.max(220, pageWidth - baseWidth);
+            const remainingWidth = Math.max(240, pageWidth - baseWidth);
             const subjectWidth = subjects.length > 0
                 ? Math.max(42, Math.floor(remainingWidth / subjects.length))
                 : 0;
@@ -168,14 +379,14 @@ function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
 
             const drawTableHeader = (y) => {
                 let x = doc.page.margins.left;
-                const headerHeight = 24;
+                const headerHeight = 26;
 
                 columns.forEach((column) => {
-                    doc.rect(x, y, column.width, headerHeight).fillAndStroke('#e8eefc', '#b9c8f2');
-                    doc.fillColor('#16325c')
+                    doc.rect(x, y, column.width, headerHeight).fill('#e0e7ff').stroke('#c7d2fe');
+                    doc.fillColor('#1e293b')
                         .font('Helvetica-Bold')
                         .fontSize(8)
-                        .text(truncate(column.label, 18), x + 4, y + 7, {
+                        .text(truncate(column.label, 20), x + 4, y + 7, {
                             width: column.width - 8,
                             align: 'center'
                         });
@@ -188,9 +399,9 @@ function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
             renderPageHeader();
             let y = drawTableHeader(doc.y + 6);
 
-            students.forEach((student) => {
+            students.forEach((student, rowIndex) => {
                 const rowHeight = 22;
-                const bottomLimit = doc.page.height - doc.page.margins.bottom - 24;
+                const bottomLimit = doc.page.height - doc.page.margins.bottom - 30;
 
                 if (y + rowHeight > bottomLimit) {
                     doc.addPage({ margin: 28, size: 'A3', layout: 'landscape' });
@@ -200,9 +411,9 @@ function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
 
                 let x = doc.page.margins.left;
                 const cells = [
-                    truncate(student.name, 22),
+                    truncate(student.name, 24),
                     truncate(student.studentId, 14),
-                    truncate(student.facultyName, 18),
+                    truncate(student.facultyName, 16),
                     truncate(student.className, 16),
                     String(student.subjectCount || 0),
                     student.totalPoints > 0 ? `${student.totalScore}/${student.totalPoints}` : '-',
@@ -213,10 +424,13 @@ function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
                 ];
 
                 columns.forEach((column, index) => {
-                    doc.rect(x, y, column.width, rowHeight).stroke('#d7dce5');
-                    doc.fillColor('#222222')
+                    if (rowIndex % 2 === 0) {
+                        doc.rect(x, y, column.width, rowHeight).fillOpacity(0.08).fill('#f8fafc').fillOpacity(1);
+                    }
+                    doc.rect(x, y, column.width, rowHeight).stroke('#e2e8f0');
+                    doc.fillColor('#111827')
                         .font('Helvetica')
-                        .fontSize(7.5)
+                        .fontSize(8)
                         .text(truncate(cells[index], 18), x + 4, y + 7, {
                             width: column.width - 8,
                             align: index >= 5 ? 'center' : 'left'
@@ -229,12 +443,12 @@ function generateClassMatrixPDF({ faculty, classroom, subjects, students }) {
 
             if (students.length === 0) {
                 doc.moveDown(1);
-                doc.font('Helvetica').fontSize(11).fillColor('#666666')
+                doc.font('Helvetica').fontSize(11).fillColor('#6b7280')
                     .text('No students or subject results found for the selected class.', { align: 'center' });
             }
 
             doc.moveDown(1);
-            doc.font('Helvetica').fontSize(9).fillColor('#666666')
+            doc.font('Helvetica').fontSize(9).fillColor('#6b7280')
                 .text('Accessible Digital Examination System - Result Exam Report', { align: 'center' });
 
             doc.end();

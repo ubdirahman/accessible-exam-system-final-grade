@@ -5,8 +5,8 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
-const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
+// Only allow letters (Latin + Arabic/Somali), numbers, and spaces in name fields
+const nameOnly = (val) => val.replace(/[^a-zA-Z0-9\s\u0600-\u06FF\-']/g, '');
 
 export default function AdminSubjects() {
     const { user } = useAuth();

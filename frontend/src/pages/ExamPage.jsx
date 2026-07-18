@@ -72,11 +72,13 @@ function buildQuestionSpeech(question, index, total, sectionName, currentAnswer)
 
     if (question.type === 'open-ended') {
         parts.push('You may type or dictate your answer. Say save answer when you are ready.');
+    } else if (question.type === 'true-false') {
+        parts.push('Say A or B, then say yes to confirm.');
     } else {
         parts.push('Say A, B, C, or D, then say yes to confirm.');
     }
 
-    return parts.filter(Boolean).join(' ');
+    return parts.filter(Boolean);
 }
 
 function buildTimeWarning(seconds) {
@@ -128,6 +130,7 @@ export default function ExamPage() {
     const autoSaveRef = useRef(null);
     const dictationTimeoutRef = useRef(null);
     const listeningPromptRef = useRef(null);
+    const activeQuestionIdRef = useRef(null);
     const feedbackTimerRef = useRef(null);
     const statusTimerRef = useRef(null);
     const alertTimerRef = useRef(null);
@@ -154,7 +157,9 @@ export default function ExamPage() {
     const timerClass = !isTimedExam ? '' : timeRemaining <= 60 ? 'danger' : timeRemaining <= 300 ? 'warning' : '';
     const questionGuidance = currentQuestion?.type === 'open-ended'
         ? 'Type or speak your answer. When you pause, the system reads it back and asks Yes or No. Say Yes to save, or No to continue speaking. You can also say "Save answer" or press Control and Enter.'
-        : 'Choose one answer. Say A, B, C, or D, then confirm with Yes. After saving, you will be asked if you want the next question.';
+        : currentQuestion?.type === 'true-false'
+            ? 'Choose one answer. Say A or B, then confirm with Yes. After saving, you will be asked if you want the next question.'
+            : 'Choose one answer. Say A, B, C, or D, then confirm with Yes. After saving, you will be asked if you want the next question.';
 
     const clearAnnouncementTimer = useCallback((timerRef) => {
         if (timerRef.current) {
@@ -383,15 +388,23 @@ export default function ExamPage() {
     const selectOption = useCallback((letter) => {
         if (!currentQuestion || currentQuestion.type === 'open-ended') return;
 
+        if (currentQuestion.type === 'true-false' && letter !== 'A' && letter !== 'B') {
+            announce('Invalid option. Choose A or B.', {
+                speakMessage: true,
+                assertive: true
+            });
+            return;
+        }
+
         const option = getSelectedOption(currentQuestion, letter);
-        const optionDescription = option ? ` ${option.text}.` : '';
+        const optionDescription = option ? `: ${option.text}` : '';
 
         stopTTS();
         setPendingAnswer(letter);
         setShowConfirm(true);
         setWaitingNextConfirm(false);
 
-        announce(`Option ${letter} selected.${optionDescription} Say yes or no.`, {
+        announce(`Option ${letter}${optionDescription}. Are you sure?`, {
             speakMessage: true,
             assertive: true
         });
@@ -407,7 +420,7 @@ export default function ExamPage() {
         setWaitingNextConfirm(true);
 
         stopTTS();
-        announce(`Answer saved as ${getCurrentAnswerSummary(currentQuestion, pendingAnswer)}. Do you want to go to the next question? Say yes or no.`, {
+        announce(`Saved. Next question?`, {
             speakMessage: true,
             assertive: true
         });
@@ -416,7 +429,7 @@ export default function ExamPage() {
     const cancelAnswer = useCallback(() => {
         setPendingAnswer(null);
         setShowConfirm(false);
-        announce('Answer selection cancelled. Choose another option.', { speakMessage: true, assertive: true });
+        announce('Cancelled.', { speakMessage: true, assertive: true });
     }, [announce]);
 
     const handleOpenEndedChange = useCallback((event) => {
@@ -472,7 +485,10 @@ export default function ExamPage() {
     const readCurrentQuestion = useCallback((preface = '') => {
         if (!currentQuestion) return;
 
-        const message = buildQuestionSpeech(
+        activeQuestionIdRef.current = currentQuestion.id;
+        const questionId = currentQuestion.id;
+
+        const spokenQuestionParts = buildQuestionSpeech(
             currentQuestion,
             currentIndex,
             questions.length,
@@ -480,7 +496,21 @@ export default function ExamPage() {
             currentAnswer
         );
 
-        speak(preface ? `${preface} ${message}` : message, { rate: 1.0 });
+        const promptText = currentQuestion.type === 'open-ended'
+            ? 'You can speak your answer now. Say save answer when you are done.'
+            : currentQuestion.type === 'true-false'
+                ? 'Say A or B to answer, or use Alt plus A or B on the keyboard.'
+                : 'Say A, B, C, or D to answer, or use Alt plus A to D on the keyboard.';
+
+        const speechParts = preface ? [preface, ...spokenQuestionParts] : spokenQuestionParts;
+
+        speak(speechParts, {
+            onEnd: () => {
+                if (activeQuestionIdRef.current === questionId) {
+                    announce(promptText, { speakMessage: true });
+                }
+            }
+        });
         updateLiveRegion(
             setScreenReaderStatus,
             statusTimerRef,
@@ -493,19 +523,22 @@ export default function ExamPage() {
         currentSectionName,
         questions.length,
         speak,
-        updateLiveRegion
+        updateLiveRegion,
+        announce
     ]);
 
-    const handleVoiceDictation = useCallback((text) => {
+    const handleVoiceDictation = useCallback((text, isFinal) => {
+        if (!isFinal) return false;
+
         const cleaned = text.trim();
-        if (!cleaned) return;
+        if (!cleaned) return false;
 
         if (/\b(understand|help|nervous|anxious|what does|explain)\b/i.test(cleaned)) {
             requestHelp(cleaned);
-            return;
+            return true;
         }
 
-        if (!currentQuestion || currentQuestion.type !== 'open-ended') return;
+        if (!currentQuestion || currentQuestion.type !== 'open-ended') return false;
 
         const baseText = pendingDictationRef.current || openEndedText;
         const updated = baseText ? `${baseText} ${cleaned}` : cleaned;
@@ -520,6 +553,7 @@ export default function ExamPage() {
             dictationTimeoutRef.current = null;
             requestOpenEndedSaveConfirmation('pause');
         }, DICTATION_CONFIRM_DELAY);
+        return true;
     }, [clearDictationTimer, currentQuestion, openEndedText, requestHelp, requestOpenEndedSaveConfirmation]);
 
     const handleYes = () => {
@@ -609,6 +643,7 @@ export default function ExamPage() {
         'submit exam': () => handleFinish(),
         'submit': () => openFinishDialog(),
         'stop reading': () => {
+            activeQuestionIdRef.current = null;
             stopTTS();
             announce('Speech stopped.', { toast: true, assertive: true });
         },
@@ -769,7 +804,10 @@ export default function ExamPage() {
             pendingDictationRef.current = '';
         }
 
-        const spokenQuestion = buildQuestionSpeech(
+        activeQuestionIdRef.current = currentQuestion.id;
+        const questionId = currentQuestion.id;
+
+        const spokenQuestionParts = buildQuestionSpeech(
             currentQuestion,
             currentIndex,
             questions.length,
@@ -781,7 +819,21 @@ export default function ExamPage() {
             ? ''
             : `Exam started for ${user?.name || 'student'}. The current question is focused for screen readers.`;
 
-        speak([intro, spokenQuestion].filter(Boolean).join(' '), { rate: 1.0 });
+        const speechParts = intro ? [intro, ...spokenQuestionParts] : spokenQuestionParts;
+
+        const promptText = currentQuestion.type === 'open-ended'
+            ? 'You can speak your answer now. Say save answer when you are done.'
+            : currentQuestion.type === 'true-false'
+                ? 'Say A or B to answer, or use Alt plus A or B on the keyboard.'
+                : 'Say A, B, C, or D to answer, or use Alt plus A to D on the keyboard.';
+
+        speak(speechParts, {
+            onEnd: () => {
+                if (activeQuestionIdRef.current === questionId) {
+                    announce(promptText, { speakMessage: true });
+                }
+            }
+        });
         updateLiveRegion(
             setScreenReaderStatus,
             statusTimerRef,
@@ -794,13 +846,6 @@ export default function ExamPage() {
             questionHeadingRef.current?.focus();
         });
 
-        listeningPromptRef.current = setTimeout(() => {
-            const prompt = currentQuestion.type === 'open-ended'
-                ? 'You can speak your answer now. Say save answer when you are done.'
-                : 'Say A, B, C, or D to answer, or use Alt plus A to D on the keyboard.';
-
-            announce(prompt, { speakMessage: true });
-        }, 7000);
     }, [
         announce,
         clearDictationTimer,
@@ -851,6 +896,7 @@ export default function ExamPage() {
                 }
 
                 event.preventDefault();
+                activeQuestionIdRef.current = null;
                 stopTTS();
                 announce('Speech stopped.', { toast: true, assertive: true });
                 return;
@@ -903,7 +949,9 @@ export default function ExamPage() {
                 return;
             }
 
-            if ((key === 'a' || key === 'b' || key === 'c' || key === 'd') && currentQuestion?.type !== 'open-ended') {
+            const isOptionKey = key === 'a' || key === 'b' ||
+                ((key === 'c' || key === 'd') && currentQuestion?.type !== 'true-false');
+            if (isOptionKey && currentQuestion?.type !== 'open-ended') {
                 event.preventDefault();
                 selectOption(key.toUpperCase());
             }

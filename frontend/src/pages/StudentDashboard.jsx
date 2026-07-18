@@ -45,7 +45,7 @@ export default function StudentDashboard() {
 
     const handleLogout = useCallback(async () => {
         setConfirmLogoutPending(true);
-        speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+        speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
         const confirmed = await askConfirm({
             title: 'Logout Confirmation',
             message: 'Are you sure you want to log out of the system?',
@@ -60,7 +60,7 @@ export default function StudentDashboard() {
             navigate('/');
         } else {
             setConfirmLogoutPending(false);
-            speak('Logout cancelled.', { rate: 1.0 });
+            speak('Ka bixitaankii waa la joojiyay.', { lang: 'so-SO', rate: 1.0 });
         }
     }, [askConfirm, logout, navigate, resetExamSession, speak]);
 
@@ -104,43 +104,43 @@ export default function StudentDashboard() {
 
         if (totalCount === 0) {
             return [
-                `Welcome ${user?.name || 'student'}.`,
-                'There are no active exams available for you right now.',
-                'Say logout when you are ready to leave.'
+                `Kula soo dhawoow gacmo furan, ${user?.name || 'arday'}.`,
+                'Ma jiraan imtixaano hadda kuu qorshaysan oo aad u fadhiisan karto.',
+                'Fadlan dheh "ka bax" marka aad rabto inaad ka baxdo nidaamka.'
             ].join(' ');
         }
 
         if (!currentExam) {
             return [
-                `Welcome ${user?.name || 'student'}.`,
-                `You have completed all ${completedCount} exams.`,
+                `Kula soo dhawoow gacmo furan, ${user?.name || 'arday'}.`,
+                `Waxaad si guul leh u dhammaystirtay dhammaan ${completedCount} imtixaan oo kuu qorshaysnaa.`,
                 completedNames.length
-                    ? `Completed subjects are ${joinNamesForSpeech(completedNames)}.`
-                    : 'You have no completed subjects yet.',
-                'There are no remaining exams.',
+                    ? `Maaddooyinka aad u fadhiisatay ee aad dhammaystirtay waa: ${joinNamesForSpeech(completedNames)}.`
+                    : 'Wali ma aadan dhammaystirin wax imtixaan ah.',
+                'Ma jiraan imtixaano kale oo kuu dhiman.',
                 latestCompletedExam
-                    ? `Your latest completed subject is ${latestCompletedExam.subjectName}.`
+                    ? `Imtixaankii ugu dambeeyay ee aad dhammaystirtay wuxuu ahaa maaddada: ${latestCompletedExam.subjectName}.`
                     : '',
-                'You can say logout to leave the system.'
+                'Dheh "ka bax" si aad uga baxdo nidaamka.'
             ].filter(Boolean).join(' ');
         }
 
         return [
-            `Welcome ${user?.name || 'student'}.`,
-            `You have ${totalCount} exams in total.`,
+            `Kula soo dhawoow gacmo furan, ${user?.name || 'arday'}.`,
+            `Waxaad leedahay wadar ahaan ${totalCount} imtixaan oo kuu qorshaysan.`,
             completedCount > 0
-                ? `You have already completed ${completedCount} ${completedCount === 1 ? 'subject' : 'subjects'}: ${joinNamesForSpeech(completedNames)}.`
-                : 'You have not completed any subject yet.',
-            `You are now going to take ${currentSubject}.`,
+                ? `Waxaad mar hore si guul leh u dhammaystirtay ${completedCount} imtixaan oo kala ah: ${joinNamesForSpeech(completedNames)}.`
+                : 'Wali ma aadan dhammaystirin wax imtixaan ah.',
+            `Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentSubject}.`,
             currentTitle && currentTitle !== currentSubject
-                ? `The exam title is ${currentTitle}.`
+                ? `Ciwaanka rasmiga ah ee imtixaanku waa: ${currentTitle}.`
                 : '',
             remainingNames.length
-                ? `After this, the remaining subjects are ${joinNamesForSpeech(remainingNames)}.`
-                : 'After this subject, there are no more remaining exams.',
-            totalQuestions > 0 ? `This exam has ${totalQuestions} questions.` : '',
-            timeLimit > 0 ? `You have ${timeLimit} minutes to finish.` : 'This exam is not timed.',
-            includeStartPrompt ? 'Should I start the exam now? Please say yes or no.' : ''
+                ? `Maaddadan ka dib, imtixaanada kale ee kuu dhiman waa: ${joinNamesForSpeech(remainingNames)}.`
+                : 'Imtixaankan ka dib, ma jiraan maaddooyin kale oo kuu dhiman.',
+            totalQuestions > 0 ? `Imtixaankani wuxuu ka kooban yahay ${totalQuestions} su'aalood.` : '',
+            timeLimit > 0 ? `Waxaad haysataa muddo dhan ${timeLimit} daqiiqo oo aad ku dhammayso.` : 'Imtixaankani waqti xaddidan ma laha.',
+            includeStartPrompt ? 'Miyaan bilaabaa imtixaanka hadda? Fadlan dheh haa ama maya.' : ''
         ].filter(Boolean).join(' ');
     }, [completedExams, currentExam, examData, latestCompletedExam, queueData, remainingAfterCurrent, user?.name]);
 
@@ -148,7 +148,7 @@ export default function StudentDashboard() {
         const text = buildDashboardSpeech(includeStartPrompt);
         if (!text) return;
 
-        speak(text, { rate: 1.0 });
+        speak(text, { lang: 'so-SO', rate: 1.0 });
         setWaitingRepeat(false);
 
         if (currentExam && includeStartPrompt) {
@@ -162,41 +162,41 @@ export default function StudentDashboard() {
 
     const speakCompletedSubjects = useCallback(() => {
         if (!completedExams.length) {
-            speak('You have not completed any subjects yet.');
+            speak('Wali ma aadan dhammaystirin wax imtixaan ah.', { lang: 'so-SO' });
             return;
         }
 
-        speak(`You have completed ${completedExams.length} subjects: ${joinNamesForSpeech(completedExams.map((exam) => exam.subjectName))}.`);
+        speak(`Waxaad si guul leh u dhammaystirtay ${completedExams.length} imtixaan oo kala ah: ${joinNamesForSpeech(completedExams.map((exam) => exam.subjectName))}.`, { lang: 'so-SO' });
     }, [completedExams, speak]);
 
     const speakRemainingSubjects = useCallback(() => {
         if (!currentExam) {
-            speak('There are no remaining exams.');
+            speak('Ma jiraan imtixaano kale oo kuu dhiman.', { lang: 'so-SO' });
             return;
         }
 
         if (!remainingAfterCurrent.length) {
-            speak(`You are now taking ${currentExam.subjectName}. After this, there will be no more remaining exams.`);
+            speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}. Imtixaankan ka dib, ma jiraan imtixaano kale oo kuu dhiman.`, { lang: 'so-SO' });
             return;
         }
 
-        speak(`You are now taking ${currentExam.subjectName}. The subjects after this are ${joinNamesForSpeech(remainingAfterCurrent.map((exam) => exam.subjectName))}.`);
+        speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}. Imtixaanada ku xiga ee kuu dhiman waa: ${joinNamesForSpeech(remainingAfterCurrent.map((exam) => exam.examId || exam.subjectName))}.`, { lang: 'so-SO' });
     }, [currentExam, remainingAfterCurrent, speak]);
 
     const requestStartConfirmation = useCallback(() => {
         if (!currentExam) {
-            speak('There is no unfinished exam to start right now.');
+            speak('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
             return;
         }
 
         setWaitingStart(true);
         setConfirmStartPending(true);
-        speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+        speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
     }, [currentExam, speak]);
 
     async function startExamNow() {
         if (!currentExam?.id) {
-            speak('There is no unfinished exam to start right now.');
+            speak('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
             return;
         }
 
@@ -217,11 +217,11 @@ export default function StudentDashboard() {
 
             if (err.response?.status === 400 && msg.toLowerCase().includes('already')) {
                 await loadDashboardData();
-                speak('That exam was already completed. I have refreshed your dashboard and selected the next available subject.', { rate: 1.0 });
+                speak('Imtixaankaas mar hore ayaad dhammaystirtay. Waan cusboonaysiiyay boggaaga waxaana kuu soo doortay imtixaanka ku xiga.', { lang: 'so-SO', rate: 1.0 });
                 return;
             }
 
-            speak(msg, { rate: 1.0 });
+            speak(msg, { lang: 'so-SO', rate: 1.0 });
         }
     }
 
@@ -254,7 +254,7 @@ export default function StudentDashboard() {
             setWaitingStart(false);
             setConfirmStartPending(false);
             setWaitingRepeat(true);
-            speak('Okay. Say repeat summary to hear your exam plan again, or say logout when you are ready.', { rate: 1.0 });
+            speak('Haye. Dheh ku celi warbixinta si aad mar kale u maqasho qorshahaaga, ama dheh ka bax markaad diyaar tahay.', { lang: 'so-SO', rate: 1.0 });
         }
     }, [confirmLogoutPending, triggerCancel, speak, waitingRepeat, waitingStart]);
 
@@ -277,16 +277,16 @@ export default function StudentDashboard() {
         'how many subjects': () => speakDashboardSummary(false),
         'current subject': () => {
             if (currentExam) {
-                speak(`You are now taking ${currentExam.subjectName}.`, { rate: 1.0 });
+                speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
             } else {
-                speak('You do not have a current exam right now.', { rate: 1.0 });
+                speak('Ma jiraan imtixaano hadda kuu furan oo aad u fadhiisan karto.', { lang: 'so-SO', rate: 1.0 });
             }
         },
         'what am i taking': () => {
             if (currentExam) {
-                speak(`You are now taking ${currentExam.subjectName}.`, { rate: 1.0 });
+                speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
             } else {
-                speak('You do not have a current exam right now.', { rate: 1.0 });
+                speak('Ma jiraan imtixaano hadda kuu furan oo aad u fadhiisan karto.', { lang: 'so-SO', rate: 1.0 });
             }
         },
         'what is next': () => speakRemainingSubjects(),
@@ -300,9 +300,9 @@ export default function StudentDashboard() {
         'help me': () => {
             speak(
                 currentExam
-                    ? 'You can say start exam, repeat summary, completed subjects, remaining subjects, refresh dashboard, or logout.'
-                    : 'You can say repeat summary, completed subjects, refresh dashboard, or logout.',
-                { rate: 1.0 }
+                    ? 'Waxaad dhihi kartaa: "bilow imtixaan", "ku celi warbixinta", "imtixaanada dhammaaday", "imtixaanada haray", "cusboonaysii bogga", ama "ka bax".'
+                    : 'Waxaad dhihi kartaa: "ku celi warbixinta", "imtixaanada dhammaaday", "cusboonaysii bogga", ama "ka bax".',
+                { lang: 'so-SO', rate: 1.0 }
             );
             setWaitingRepeat(true);
         },
@@ -318,36 +318,36 @@ export default function StudentDashboard() {
         'sign out of system': () => handleLogout(),
         'try': () => {
             if (confirmLogoutPending) {
-                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else if (confirmStartPending) {
-                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else {
                 speakDashboardSummary(false);
             }
         },
         'again': () => {
             if (confirmLogoutPending) {
-                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else if (confirmStartPending) {
-                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else {
                 speakDashboardSummary(false);
             }
         },
         'try again': () => {
             if (confirmLogoutPending) {
-                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else if (confirmStartPending) {
-                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else {
                 speakDashboardSummary(false);
             }
         },
         'repeat': () => {
             if (confirmLogoutPending) {
-                speak('Are you sure you want to log out of the system? Please say yes or no.', { rate: 1.0 });
+                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else if (confirmStartPending) {
-                speak('Should I start your next exam now? Please say yes or no.', { rate: 1.0 });
+                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
             } else {
                 speakDashboardSummary(false);
             }

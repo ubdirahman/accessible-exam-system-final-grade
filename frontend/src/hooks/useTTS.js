@@ -8,7 +8,7 @@ export function useTTS() {
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
     const [voices, setVoices] = useState([]);
-    const [rate, setRate] = useState(1.1);
+    const [rate, setRate] = useState(1.0);
     const [selectedVoice, setSelectedVoice] = useState(null);
     const utteranceRef = useRef(null);
 
@@ -18,26 +18,36 @@ export function useTTS() {
 
         const loadVoices = () => {
             const allVoices = synth.getVoices();
+            setVoices(allVoices);
+
             const englishVoices = allVoices.filter(v => v.lang.startsWith('en'));
-            setVoices(englishVoices);
 
             if (englishVoices.length > 0) {
-                // Prefer female voices — look for common female voice names
-                const femaleKeywords = ['female', 'zira', 'hazel', 'susan', 'jenny', 'aria', 'sara', 'libby', 'sonia', 'emma', 'amy', 'joanna', 'samantha', 'karen', 'moira', 'tessa', 'flo'];
-                
-                const femaleVoice = englishVoices.find(v => {
+                // Use a single MALE AI voice everywhere for consistency
+                const maleKeywords = ['guy', 'ryan', 'david', 'mark', 'james', 'roger', 'christopher', 'eric', 'brian', 'andrew', 'male', 'man'];
+
+                // 1st priority: High-quality natural/online male voices
+                const highQualityMale = englishVoices.find(v => {
                     const name = v.name.toLowerCase();
-                    return femaleKeywords.some(k => name.includes(k));
+                    const isNatural = name.includes('natural') || name.includes('google') || name.includes('online') || name.includes('neural');
+                    const isMale = maleKeywords.some(k => name.includes(k));
+                    return isNatural && isMale;
                 });
 
-                // Fallback: prefer Google/Microsoft Natural female voices
-                const naturalFemale = englishVoices.find(v => {
+                // 2nd priority: Any high-quality natural voice that is male
+                const anyNaturalMale = englishVoices.find(v => {
                     const name = v.name.toLowerCase();
-                    return (name.includes('google') || name.includes('natural')) && 
-                           !name.includes('male') && !name.includes('guy') && !name.includes('david') && !name.includes('mark') && !name.includes('james') && !name.includes('ryan');
+                    return (name.includes('natural') || name.includes('online') || name.includes('neural')) && maleKeywords.some(k => name.includes(k));
                 });
 
-                setSelectedVoice(femaleVoice || naturalFemale || englishVoices[0]);
+                // 3rd priority: Offline male voices (David, Mark, etc.)
+                const offlineMale = englishVoices.find(v => {
+                    const name = v.name.toLowerCase();
+                    return maleKeywords.some(k => name.includes(k));
+                });
+
+                // 4th priority: Any English voice with deeper pitch (we'll set pitch lower)
+                setSelectedVoice(highQualityMale || anyNaturalMale || offlineMale || englishVoices[0]);
             }
         };
 
@@ -49,37 +59,83 @@ export function useTTS() {
         };
     }, []);
 
-    const speak = useCallback((text, options = {}) => {
+    const speak = useCallback((textInput, options = {}) => {
         const synth = window.speechSynthesis;
         synth.cancel(); // Stop any current speech
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = options.rate || rate;
-        utterance.pitch = options.pitch || 1.3;
-        utterance.volume = options.volume || 1;
+        const parts = Array.isArray(textInput)
+            ? textInput
+            : typeof textInput === 'string' && textInput.trim()
+                ? [textInput]
+                : [];
 
-        if (options.voice || selectedVoice) {
-            utterance.voice = options.voice || selectedVoice;
-        }
+        if (parts.length === 0) return;
 
-        utterance.onstart = () => {
-            setIsSpeaking(true);
-            setIsPaused(false);
-        };
+        let completedCount = 0;
+        setIsSpeaking(true);
+        setIsPaused(false);
 
-        utterance.onend = () => {
-            setIsSpeaking(false);
-            setIsPaused(false);
-            if (options.onEnd) options.onEnd();
-        };
+        parts.forEach((partText, index) => {
+            const utterance = new SpeechSynthesisUtterance(partText);
+            utterance.rate = options.rate !== undefined ? options.rate : rate;
+            const isSelectedMale = selectedVoice && ['guy', 'ryan', 'david', 'mark', 'james', 'roger', 'christopher', 'eric', 'brian', 'andrew', 'male', 'man'].some(k => selectedVoice.name.toLowerCase().includes(k));
+            utterance.pitch = options.pitch !== undefined ? options.pitch : (isSelectedMale ? 1.0 : 0.8);
+            utterance.volume = options.volume || 1;
 
-        utterance.onerror = () => {
-            setIsSpeaking(false);
-            setIsPaused(false);
-        };
+            if (options.lang) {
+                utterance.lang = options.lang;
+                // Always use the same selected male voice for consistency
+                // Try to find a male voice for the specific language first
+                const maleKeywords = ['guy', 'ryan', 'david', 'mark', 'james', 'roger', 'christopher', 'eric', 'brian', 'andrew', 'male', 'man'];
+                const langVoices = voices.filter(v => v.lang.startsWith(options.lang) || v.lang.startsWith(options.lang.split('-')[0]));
+                const langMaleVoice = langVoices.find(v => {
+                    const name = v.name.toLowerCase();
+                    return maleKeywords.some(k => name.includes(k));
+                });
+                // Use language-specific male voice if available, otherwise use the default selected male voice
+                const chosenVoice = langMaleVoice || selectedVoice;
+                utterance.voice = chosenVoice;
+                
+                // If the chosen voice is not male, lower the pitch to make it sound male
+                const isChosenMale = chosenVoice && maleKeywords.some(k => chosenVoice.name.toLowerCase().includes(k));
+                if (!isChosenMale && options.pitch === undefined) {
+                    utterance.pitch = 0.8;
+                }
+            } else if (options.voice || selectedVoice) {
+                utterance.voice = options.voice || selectedVoice;
+            }
 
-        utteranceRef.current = utterance;
-        synth.speak(utterance);
+            if (index === 0) {
+                utterance.onstart = () => {
+                    setIsSpeaking(true);
+                    setIsPaused(false);
+                };
+            }
+
+            utterance.onend = () => {
+                completedCount++;
+                if (completedCount === parts.length) {
+                    setIsSpeaking(false);
+                    setIsPaused(false);
+                    if (options.onEnd) options.onEnd();
+                }
+            };
+
+            utterance.onerror = () => {
+                completedCount++;
+                if (completedCount === parts.length) {
+                    setIsSpeaking(false);
+                    setIsPaused(false);
+                    if (options.onEnd) options.onEnd();
+                }
+            };
+
+            if (index === parts.length - 1) {
+                utteranceRef.current = utterance;
+            }
+
+            synth.speak(utterance);
+        });
     }, [rate, selectedVoice]);
 
     const pause = useCallback(() => {

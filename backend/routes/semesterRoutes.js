@@ -33,6 +33,22 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
         const { name, startDate, endDate } = req.body;
         if (!name) return res.status(400).json({ message: 'Semester name is required.' });
 
+        const isPastDate = (dateStr) => {
+            if (!dateStr) return false;
+            const inputDate = new Date(dateStr);
+            inputDate.setHours(0, 0, 0, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return inputDate < today;
+        };
+
+        if (isPastDate(startDate)) {
+            return res.status(400).json({ message: 'Start date cannot be in the past.' });
+        }
+        if (isPastDate(endDate)) {
+            return res.status(400).json({ message: 'End date cannot be in the past.' });
+        }
+
         const semester = await Semester.create({
             name,
             startDate,
@@ -56,13 +72,34 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
         const facultyId = resolveFacultyId(req);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
+        const existing = await Semester.findOne({ _id: req.params.id, facultyId });
+        if (!existing) return res.status(404).json({ message: 'Semester not found for this faculty.' });
+
+        const { name, startDate, endDate, isActive } = req.body;
+
+        const isPastDate = (dateStr) => {
+            if (!dateStr) return false;
+            const inputDate = new Date(dateStr);
+            inputDate.setHours(0, 0, 0, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return inputDate < today;
+        };
+
+        // Only validate if date is being changed
+        if (startDate && (!existing.startDate || new Date(startDate).getTime() !== new Date(existing.startDate).getTime()) && isPastDate(startDate)) {
+            return res.status(400).json({ message: 'Start date cannot be in the past.' });
+        }
+        if (endDate && (!existing.endDate || new Date(endDate).getTime() !== new Date(existing.endDate).getTime()) && isPastDate(endDate)) {
+            return res.status(400).json({ message: 'End date cannot be in the past.' });
+        }
+
         const updates = (({ name, startDate, endDate, isActive }) => ({ name, startDate, endDate, isActive }))(req.body);
         const semester = await Semester.findOneAndUpdate(
             { _id: req.params.id, facultyId },
             updates,
             { new: true }
         );
-        if (!semester) return res.status(404).json({ message: 'Semester not found for this faculty.' });
         res.json(semester);
     } catch (error) {
         console.error('Update semester error:', error);

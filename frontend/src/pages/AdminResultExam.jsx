@@ -201,7 +201,7 @@ export default function AdminResultExam() {
                         <i className="fa-solid fa-rotate-right"></i> Refresh
                     </button>
                     <button className="btn btn-primary" onClick={downloadPdf} disabled={!selectedClass || tableLoading}>
-                        <i className="fa-solid fa-file-pdf"></i> Download PDF
+                        <i className="fa-solid fa-file-pdf"></i> Download PDF Report
                     </button>
                 </div>
             </div>

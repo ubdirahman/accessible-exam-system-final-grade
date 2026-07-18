@@ -23,17 +23,56 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         setTranscript(text);
 
         const commands = commandMapRef.current;
+
+        // 0. Confirmations FIRST (English + Somali) — must come before MCQ matching
+        //    so that "haa" is not caught as option "A"
+        //    Chrome en-US transcribes Somali "haa" as: ha, huh, hot, heart, hard, hah, etc.
+        //    Chrome en-US transcribes Somali "maya" as: my, maya, my a, mya, my yeah, etc.
+        const yesPatterns = /\b(yes|yeah|yep|yah|yup|sure|confirm|do it|h[auh]+|okay|ok|o\.?k|ha+h?|huh|hot|heart|hard|high|hi|höö|höh)\b/i;
+        const noPatterns = /\b(no|nah|nope|cancel|stop|maya+|ma\s*ya|mya+|nay|maaya+|mayya|na+h|noo+|never)\b/i;
+        if (yesPatterns.test(text) && commands['yes']) {
+            setLastCommand('Yes');
+            commands['yes']();
+            return true;
+        }
+        if (noPatterns.test(text) && commands['no']) {
+            setLastCommand('No');
+            commands['no']();
+            return true;
+        }
+
         const allowFastOptionMatch = typeof commands.__shouldMatchOption__ === 'function'
             ? commands.__shouldMatchOption__(text)
             : true;
 
-        // Fast MCQ letter capture even inside longer phrases ("answer is b", "waa c")
-        const optionMatchFast = text.match(/\b([a-d])\b/);
-        if (allowFastOptionMatch && optionMatchFast && commands['option']) {
-            const letter = optionMatchFast[1].toUpperCase();
-            setLastCommand(`Option ${letter}`);
-            commands['option'](letter);
-            return true;
+        if (allowFastOptionMatch && commands['option']) {
+            const words = text.toLowerCase().split(/\s+/);
+            const aPatterns = /^(a|hey|ay|eight|8|eh|ate|eye)$/i;
+            const bPatterns = /^(b|be|bee|beat|busy)$/i;
+            const cPatterns = /^(c|see|sea|she|si|say)$/i;
+            const dPatterns = /^(d|dee|the|day|do|d\.)$/i;
+
+            let letter = null;
+            if (words.length === 1) {
+                const word = words[0];
+                if (aPatterns.test(word)) letter = 'A';
+                else if (bPatterns.test(word)) letter = 'B';
+                else if (cPatterns.test(word)) letter = 'C';
+                else if (dPatterns.test(word)) letter = 'D';
+            }
+
+            if (!letter) {
+                const optionMatchFast = text.match(/\b([a-d])\b/);
+                if (optionMatchFast) {
+                    letter = optionMatchFast[1].toUpperCase();
+                }
+            }
+
+            if (letter) {
+                setLastCommand(`Option ${letter}`);
+                commands['option'](letter);
+                return true;
+            }
         }
 
         // 1. Data Extraction Patterns (Student ID, Exam Code)
@@ -82,22 +121,10 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
             }
         }
 
-        // 3. Confirmations (English + Somali)
-        if ((text === 'yes' || text === 'confirm' || text === 'do it' || text === 'haa') && commands['yes']) {
-            setLastCommand('Yes');
-            commands['yes']();
-            return true;
-        }
-        if ((text === 'no' || text === 'cancel' || text === 'stop' || text === 'maya') && commands['no']) {
-            setLastCommand('No');
-            commands['no']();
-            return true;
-        }
-
-        // 4. Fallback for Dictation (Only on final results to avoid duplicates)
-        if (isFinal && fallbackRef.current) {
-            fallbackRef.current(text);
-            return true;
+        // 3. Fallback for Dictation
+        if (fallbackRef.current) {
+            const handled = fallbackRef.current(text, isFinal);
+            if (handled) return true;
         }
 
         return false;
@@ -134,8 +161,8 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
                         lastExecutedRef.current = now;
                     }
                 } else {
-                    // Check for short, urgent commands in interim results (A, B, C, D, Next, Save)
-                    if (spoken.length <= 15 && processCommand(spoken, false)) {
+                    // Run processCommand on interim. If it returns true, we treat it as a finalized command.
+                    if (processCommand(spoken, false)) {
                         lastExecutedRef.current = now;
                         // Stop recognition momentarily to "clear" the buffer if we found a match
                         recognition.stop();

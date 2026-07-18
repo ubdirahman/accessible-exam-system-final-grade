@@ -356,46 +356,75 @@ export default function ExamCreator() {
                                             />
                                         </div>
                                         
-                                        {(q.type === 'mcq' || q.type === 'true-false') && (
-                                            <div className="grid-2 gap-sm mb-sm">
-                                                {q.options.map((opt, optIdx) => (
-                                                    <div key={opt.label} className="flex gap-sm items-center">
-                                                        <span className={`option-label ${q.correctAnswer === opt.label ? 'bg-primary text-white' : ''}`} 
-                                                              onClick={() => updateQuestion(secIdx, qIdx, 'correctAnswer', opt.label)}
-                                                              style={{ width: 28, height: 28, fontSize: 12, cursor: 'pointer' }}>
-                                                            {opt.label}
-                                                        </span>
-                                                        <input
-                                                            className="input"
-                                                            value={opt.text}
-                                                            onChange={e => updateOption(secIdx, qIdx, optIdx, e.target.value)}
-                                                            placeholder={`Option ${opt.label}`}
-                                                            required
-                                                            disabled={q.type === 'true-false'}
-                                                            style={{ padding: '4px 10px', fontSize: 13 }}
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
+                                        {q.type === 'mcq' && (
+                                            <>
+                                                <div className="grid-2 gap-sm mb-sm">
+                                                    {q.options.map((opt, optIdx) => (
+                                                        <div key={opt.label} className="flex gap-sm items-center">
+                                                            <span className={`option-label ${q.correctAnswer === opt.label ? 'bg-primary text-white' : ''}`} 
+                                                                  onClick={() => updateQuestion(secIdx, qIdx, 'correctAnswer', opt.label)}
+                                                                  style={{ width: 28, height: 28, fontSize: 12, cursor: 'pointer' }}>
+                                                                {opt.label}
+                                                            </span>
+                                                            <input
+                                                                className="input"
+                                                                value={opt.text}
+                                                                onChange={e => updateOption(secIdx, qIdx, optIdx, e.target.value)}
+                                                                placeholder={`Option ${opt.label}`}
+                                                                required
+                                                                style={{ padding: '4px 10px', fontSize: 13 }}
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="flex items-center justify-end gap-sm">
+                                                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Correct:</span>
+                                                    <input
+                                                        className="input"
+                                                        value={q.correctAnswer}
+                                                        onChange={e => {
+                                                            let val = e.target.value.toUpperCase();
+                                                            if (!['A', 'B', 'C', 'D'].includes(val) && val !== '') return;
+                                                            updateQuestion(secIdx, qIdx, 'correctAnswer', val);
+                                                        }}
+                                                        required
+                                                        placeholder="A-D"
+                                                        maxLength={1}
+                                                        style={{ width: 40, textAlign: 'center', padding: '4px' }}
+                                                    />
+                                                </div>
+                                            </>
                                         )}
 
-                                        {q.type !== 'open-ended' && (
-                                            <div className="flex items-center justify-end gap-sm">
-                                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Correct:</span>
-                                                <input
-                                                    className="input"
-                                                    value={q.correctAnswer}
-                                                    onChange={e => {
-                                                        let val = e.target.value.toUpperCase();
-                                                        if (q.type === 'mcq' && !['A', 'B', 'C', 'D'].includes(val) && val !== '') return;
-                                                        if (q.type === 'true-false' && !['A', 'B'].includes(val) && val !== '') return;
-                                                        updateQuestion(secIdx, qIdx, 'correctAnswer', val);
-                                                    }}
-                                                    required
-                                                    placeholder={q.type === 'true-false' ? "A/B" : "A-D"}
-                                                    maxLength={1}
-                                                    style={{ width: 40, textAlign: 'center', padding: '4px' }}
-                                                />
+                                        {q.type === 'true-false' && (
+                                            <div className="flex gap-sm mb-sm items-center justify-between">
+                                                <div className="flex gap-sm items-center">
+                                                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Correct Answer:</span>
+                                                    <button
+                                                        type="button"
+                                                        className={`btn btn-sm ${q.correctAnswer === 'A' ? 'btn-primary' : 'btn-secondary'}`}
+                                                        onClick={() => {
+                                                            updateQuestion(secIdx, qIdx, 'correctAnswer', 'A');
+                                                            updateOption(secIdx, qIdx, 0, 'True');
+                                                            updateOption(secIdx, qIdx, 1, 'False');
+                                                        }}
+                                                        style={{ padding: '4px 16px' }}
+                                                    >
+                                                        True
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className={`btn btn-sm ${q.correctAnswer === 'B' ? 'btn-primary' : 'btn-secondary'}`}
+                                                        onClick={() => {
+                                                            updateQuestion(secIdx, qIdx, 'correctAnswer', 'B');
+                                                            updateOption(secIdx, qIdx, 0, 'True');
+                                                            updateOption(secIdx, qIdx, 1, 'False');
+                                                        }}
+                                                        style={{ padding: '4px 16px' }}
+                                                    >
+                                                        False
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
                                     </div>

@@ -210,8 +210,7 @@ export function extractStudentIdChunks(input = '') {
 
 export function normalizeStudentIdFromSpeech(input = '') {
     const parsed = extractStudentIdChunks(input).join('');
-
-    return parsed.replace(/[^A-Z0-9]/g, '').toUpperCase();
+    return sanitizeStudentId(parsed);
 }
 
 export function extractSingleStudentIdCharacter(input = '') {
@@ -223,15 +222,36 @@ export function extractSingleStudentIdCharacter(input = '') {
 }
 
 export function sanitizeStudentId(value = '') {
-    return String(value || '')
+    let clean = String(value || '')
         .trim()
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, '');
+    
+    if (!clean) return '';
+    
+    const firstChar = clean[0];
+    
+    // First character can only be C, M, or N if it's a letter
+    if (/[A-Z]/.test(firstChar)) {
+        if (firstChar !== 'C' && firstChar !== 'M' && firstChar !== 'N') {
+            clean = clean.slice(1);
+        }
+    }
+    
+    const firstPart = clean[0] || '';
+    let restPart = clean.slice(1);
+    
+    if (firstPart === 'C' || firstPart === 'M' || firstPart === 'N') {
+        restPart = restPart.replace(/[^0-9]/g, '');
+        return firstPart + restPart;
+    } else {
+        return clean.replace(/[^0-9]/g, '');
+    }
 }
 
 export function isLikelyStudentId(value = '') {
     const id = sanitizeStudentId(value);
-    return /^[A-Z0-9]{4,40}$/.test(id);
+    return /^[CMN]\d+$/.test(id);
 }
 
 export function spellStudentId(value = '') {
