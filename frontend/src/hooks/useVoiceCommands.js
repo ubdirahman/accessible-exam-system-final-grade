@@ -1,43 +1,65 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+function normalizeTranscript(value = '') {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[']/g, '')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function getResultAlternatives(result, maxAlternatives = 1) {
+    const limit = Math.max(1, Math.min(Number(maxAlternatives) || 1, result.length || 1));
+    const alternatives = [];
+
+    for (let index = 0; index < limit; index++) {
+        const transcript = result[index]?.transcript;
+        if (transcript) alternatives.push(transcript);
+    }
+
+    return alternatives.length ? alternatives : [result[0]?.transcript || ''];
+}
+
 /**
  * Custom hook for Web Speech API voice recognition
  * Supports mapping spoken commands to callback functions
  */
-export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandler = null) {
+export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandler = null, options = undefined) {
     const [isListening, setIsListening] = useState(false);
     const [transcript, setTranscript] = useState('');
     const [lastCommand, setLastCommand] = useState('');
     const recognitionRef = useRef(null);
     const commandMapRef = useRef(commandMap);
     const fallbackRef = useRef(fallbackHandler);
+    const optionsRef = useRef(options || {});
 
     // Keep refs current
     useEffect(() => {
         commandMapRef.current = commandMap;
         fallbackRef.current = fallbackHandler;
-    }, [commandMap, fallbackHandler]);
+        optionsRef.current = options || {};
+    }, [commandMap, fallbackHandler, options]);
 
     const processCommand = useCallback((spoken, isFinal = true) => {
-        const text = spoken.toLowerCase().trim();
+        const text = normalizeTranscript(spoken);
         setTranscript(text);
+
+        if (!text) return false;
 
         const commands = commandMapRef.current;
 
-        // 0. Confirmations FIRST (English + Somali) — must come before MCQ matching
-        //    so that "haa" is not caught as option "A"
-        //    Chrome en-US transcribes Somali "haa" as: ha, huh, hot, heart, hard, hah, etc.
-        //    Chrome en-US transcribes Somali "maya" as: my, maya, my a, mya, my yeah, etc.
-        const yesPatterns = /\b(yes|yeah|yep|yah|yup|sure|confirm|do it|h[auh]+|okay|ok|o\.?k|ha+h?|huh|hot|heart|hard|high|hi|höö|höh)\b/i;
-        const noPatterns = /\b(no|nah|nope|cancel|stop|maya+|ma\s*ya|mya+|nay|maaya+|mayya|na+h|noo+|never)\b/i;
-        if (yesPatterns.test(text) && commands['yes']) {
-            setLastCommand('Yes');
-            commands['yes']();
-            return true;
-        }
+        // 0. Confirmations FIRST (English + Somali) before MCQ matching.
+        const yesPatterns = /\b(yes|yeah|yep|yah|yup|sure|confirm|do it|okay|ok|o\.?k|haa+|haah|haye|hayeh|diyaar|waan diyaar ahay|ha+h?|huh|hot|heart|hard|high|hi)\b/i;
+        const noPatterns = /\b(no|nah|nope|cancel|stop|maya+|ma\s*ya|maaya+|mya+|mayya|ha bilaabin|ma diyaar ihi|ma diyaar ahi|nay|na+h|noo+|never)\b/i;
         if (noPatterns.test(text) && commands['no']) {
             setLastCommand('No');
             commands['no']();
+            return true;
+        }
+        if (yesPatterns.test(text) && commands['yes']) {
+            setLastCommand('Yes');
+            commands['yes']();
             return true;
         }
 
@@ -76,17 +98,11 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         }
 
         // 1. Data Extraction Patterns (Student ID, Exam Code)
-        if (
-            text.includes('my id is') ||
-            text.includes('student id is') ||
-            text.includes('i d is') ||
-            text.includes('id waa') ||
-            text.includes('aqoonsi waa')
-        ) {
-            const idMatch = text.match(
-                /(?:my\s+student\s+id|student\s+id|my\s+id|i\s*d|id|aqoonsi(?:ga(?:ygu)?)?)\s*(?:is|waa)\s+(.+)/
-            );
-            const id = idMatch ? idMatch[1].trim() : '';
+        const idMatch = text.match(
+            /(?:my\s+student\s+id|student\s+id|my\s+id|my\s+i\s*d|i\s*d|id|aqoonsi(?:ga(?:ygu|yga|ga)?)?|nambark(?:a|ayga|eyga|aygu|aaga)?(?:\s+ardayga)?|lambark(?:a|ayga|eyga|aygu|aaga)?(?:\s+ardayga)?|numberk(?:a|ayga|eyga|aygu|aaga)?)(?:\s+(?:is|waa|yahay))?\s+(.+)/i
+        );
+        if (idMatch) {
+            const id = idMatch[1].trim();
             if (id && commands['set student id']) {
                 commands['set student id'](id);
                 setLastCommand(`ID: ${id.toUpperCase().replace(/\s+/g, '')}`);
@@ -107,7 +123,7 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         // 2. Intent-Based Matching (Variations)
         for (const [pattern, handler] of Object.entries(commands)) {
             if (pattern.startsWith('__')) continue;
-            const patternLower = pattern.toLowerCase();
+            const patternLower = normalizeTranscript(pattern);
 
             // Safety: Short commands (like 'a', 'no') must be exact matches to avoid false positives in longer sentences
             const isMatch = patternLower.length <= 2
@@ -132,7 +148,7 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
     const lastExecutedRef = useRef(0);
 
-    const startListening = useCallback(() => {
+    const startListening = useCallback((languageOverride = '') => {
         if (!enabled) return;
         if (recognitionRef.current) return; // already listening
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -142,36 +158,55 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true; // Enabled for speed
-        recognition.lang = 'en-US';
+        const recognitionOptions = optionsRef.current || {};
+        recognition.continuous = recognitionOptions.continuous ?? true;
+        recognition.interimResults = recognitionOptions.interimResults ?? true;
+        recognition.maxAlternatives = recognitionOptions.maxAlternatives || 1;
+        recognition.lang = languageOverride || recognitionOptions.lang || 'en-US';
 
         recognition.onresult = (event) => {
             const now = Date.now();
             // Reduced cooldown to 150ms to allow faster command chaining (e.g., "Yes... Next")
             if (now - lastExecutedRef.current < 150) return;
 
-            let interimTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
                 const result = event.results[i];
-                const spoken = result[0].transcript.toLowerCase().trim();
+                const alternatives = getResultAlternatives(result, recognition.maxAlternatives);
+                let handled = false;
 
-                if (result.isFinal) {
-                    if (processCommand(spoken, true)) {
-                        lastExecutedRef.current = now;
+                for (const spoken of alternatives) {
+                    if (result.isFinal) {
+                        handled = processCommand(spoken, true);
+                    } else {
+                        handled = processCommand(spoken, false);
                     }
-                } else {
-                    // Run processCommand on interim. If it returns true, we treat it as a finalized command.
-                    if (processCommand(spoken, false)) {
+
+                    if (handled) {
                         lastExecutedRef.current = now;
-                        // Stop recognition momentarily to "clear" the buffer if we found a match
-                        recognition.stop();
+                        if (!result.isFinal) {
+                            recognition.stop();
+                        }
+                        break;
                     }
                 }
             }
         };
 
         recognition.onerror = (event) => {
+            const fallbackLang = optionsRef.current?.fallbackLang;
+            if (event.error === 'language-not-supported' && fallbackLang && recognition.lang !== fallbackLang) {
+                recognition.onend = null;
+                recognitionRef.current = null;
+                setIsListening(false);
+                try {
+                    recognition.stop();
+                } catch (error) {
+                    // Ignore stop errors while switching language.
+                }
+                window.setTimeout(() => startListening(fallbackLang), 250);
+                return;
+            }
+
             if (event.error !== 'no-speech') {
                 console.error('Speech recognition error:', event.error);
             }
@@ -179,18 +214,32 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         recognition.onend = () => {
             // Auto-restart if still supposed to be listening
-            if (recognitionRef.current) {
+            if (recognitionRef.current === recognition) {
                 try {
                     recognition.start();
+                    setIsListening(true);
                 } catch (e) {
-                    // Already started
+                    window.setTimeout(() => {
+                        if (recognitionRef.current === recognition) {
+                            try {
+                                recognition.start();
+                                setIsListening(true);
+                            } catch (error) {
+                                // Browser may still be releasing the microphone.
+                            }
+                        }
+                    }, 250);
                 }
             }
         };
 
-        recognition.start();
-        recognitionRef.current = recognition;
-        setIsListening(true);
+        try {
+            recognition.start();
+            recognitionRef.current = recognition;
+            setIsListening(true);
+        } catch (error) {
+            console.error('Speech recognition start error:', error);
+        }
     }, [enabled, processCommand]);
 
     const stopListening = useCallback(() => {

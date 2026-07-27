@@ -13,8 +13,22 @@ import {
     isLikelyStudentId,
     spellStudentId
 } from '../utils/studentIdSpeech';
+import { somaliTtsOptions } from '../utils/somaliSpeech';
 
 const LAST_STUDENT_ID_KEY = 'last_student_id';
+const STUDENT_ID_RECOGNITION_OPTIONS = {
+    lang: 'en-US',
+    fallbackLang: 'en-US',
+    continuous: true,
+    interimResults: true,
+    maxAlternatives: 5
+};
+const ENGLISH_ID_TTS_OPTIONS = {
+    lang: 'en-US',
+    rate: 0.78,
+    pitch: 1,
+    volume: 1
+};
 
 export default function LoginPage() {
     const [mode, setMode] = useState('student'); // 'student' | 'admin' | 'teacher'
@@ -65,8 +79,8 @@ export default function LoginPage() {
     useEffect(() => {
         studentIdRef.current = studentId;
         const status = studentId
-            ? `Current student ID ${spellStudentId(studentId)}.`
-            : `No student ID entered yet.`;
+            ? `Nambarka ardayga ee hadda waa ${spellStudentId(studentId)}.`
+            : `Weli lama gelin nambarka ardayga.`;
         setStudentStatus(status);
     }, [guidedEntryMode, studentId]);
 
@@ -99,15 +113,14 @@ export default function LoginPage() {
             }, 300);
         };
 
-        speak(text, {
-            lang: 'so-SO',
+        speak(text, somaliTtsOptions({
             ...options,
             onEnd: () => {
                 setAudioPlayingState(false);
                 if (options.onEnd) options.onEnd();
                 safeResume();
             }
-        });
+        }));
     }, [mode, speak, setAudioPlayingState]);
 
     const playConfirmationSequence = useCallback((cleanId) => {
@@ -126,16 +139,15 @@ export default function LoginPage() {
         };
 
         speak([
-            'Ma hubtaa in nambarkaaga ardaygu yahay',
-            spellStudentId(cleanId),
-            'Dheh haa ama maya.'
-        ], {
-            lang: 'so-SO',
+            'Ma hubtaa in nambarkaaga ardaygu yahay:',
+            { text: spellStudentId(cleanId), options: ENGLISH_ID_TTS_OPTIONS },
+            'Haddii uu sax yahay, dheh haa. Haddii uu khaldan yahay, dheh maya.'
+        ], somaliTtsOptions({
             onEnd: () => {
                 setAudioPlayingState(false);
                 safeResume();
             }
-        });
+        }));
     }, [mode, speak, stop, setAudioPlayingState]);
 
     const startGuidedEntry = useCallback((resetCurrent = false) => {
@@ -152,7 +164,7 @@ export default function LoginPage() {
         markStudentIdActivity();
 
         if (existingId) {
-            speakAndListen(spellStudentId(existingId));
+            speakAndListen(spellStudentId(existingId), ENGLISH_ID_TTS_OPTIONS);
         } else {
             speakAndListen('Fadlan akhri nambarkaaga ardayga.');
         }
@@ -177,7 +189,7 @@ export default function LoginPage() {
         }
 
         markStudentIdActivity();
-        speakAndListen(spellStudentId(current));
+        speakAndListen(spellStudentId(current), ENGLISH_ID_TTS_OPTIONS);
         focusStudentInput();
     }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
 
@@ -216,7 +228,7 @@ export default function LoginPage() {
         markStudentIdActivity();
 
         if (updated) {
-            speakAndListen(spellStudentId(updated));
+            speakAndListen(spellStudentId(updated), ENGLISH_ID_TTS_OPTIONS);
         } else {
             speakAndListen('Fadlan akhri nambarkaaga ardayga.');
         }
@@ -234,7 +246,7 @@ export default function LoginPage() {
             return;
         }
 
-        const isValid = /^[A-Z]+[A-Z0-9]*$/.test(cleanId);
+        const isValid = isLikelyStudentId(cleanId);
         if (!isValid) {
             speakAndListen('Fadlan mar kale akhri nambarkaaga ardayga.');
             setStudentId('');
@@ -279,7 +291,7 @@ export default function LoginPage() {
         setIdConfirmationMode('login');
         setVoiceStep('LISTENING_ID');
         markStudentIdActivity();
-        speakAndListen(spellStudentId(cleanId));
+        speakAndListen(spellStudentId(cleanId), ENGLISH_ID_TTS_OPTIONS);
         focusStudentInput();
     }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
 
@@ -317,7 +329,7 @@ export default function LoginPage() {
             return nextId;
         }
 
-        speakAndListen(spellStudentId(nextId));
+        speakAndListen(spellStudentId(nextId), ENGLISH_ID_TTS_OPTIONS);
         focusStudentInput();
         return nextId;
     }, [focusStudentInput, markStudentIdActivity, promptStudentIdConfirmation, speakAndListen]);
@@ -518,7 +530,10 @@ export default function LoginPage() {
 
             const handleClearNo = () => {
                 setVoiceStep('LISTENING_ID');
-                speakAndListen(`Nambarka waa la keydiyay. Nambarka hadda waa: ${spellStudentId(studentIdRef.current)}`);
+                speakAndListen([
+                    'Nambarka waa la keydiyay. Nambarka hadda waa:',
+                    { text: spellStudentId(studentIdRef.current), options: ENGLISH_ID_TTS_OPTIONS }
+                ]);
                 focusStudentInput();
             };
 
@@ -572,7 +587,8 @@ export default function LoginPage() {
     } = useVoiceCommands(
         getCommandMap(),
         mode === 'student',
-        mode === 'student' ? handleStudentVoiceFallback : null
+        mode === 'student' ? handleStudentVoiceFallback : null,
+        STUDENT_ID_RECOGNITION_OPTIONS
     );
 
     useEffect(() => {
@@ -670,16 +686,16 @@ export default function LoginPage() {
                         }}>
                         <div className="voice-dot"></div>
                         <span>
-                            {voiceStep === 'CONFIRM_ID' ? 'Say Yes or No' :
-                                voiceStep === 'CONFIRM_CLEAR' ? 'Clear ID? Say Yes or No' :
-                                guidedEntryMode ? 'Guided ID Entry' :
-                                isListening ? (lastCommand || 'Listening for ID...') : 'Voice Off'}
+                            {voiceStep === 'CONFIRM_ID' ? 'Dheh haa ama maya' :
+                                voiceStep === 'CONFIRM_CLEAR' ? 'Ma tirtaa? Dheh haa ama maya' :
+                                guidedEntryMode ? 'Gelinta ID-ga' :
+                                isListening ? (lastCommand || 'Dhageysanayaa ID-ga...') : 'Codku wuu dansan yahay'}
                         </span>
                     </div>
                     {/* live raw transcript */}
                     {isListening && transcript && voiceStep === 'LISTENING_ID' && (
                         <div className="transcript student-login-transcript" style={{ position: 'fixed', top: 'clamp(120px,18vh,160px)', left: '50%', transform: 'translateX(-50%)', fontSize: 'var(--font-size-sm)' }}>
-                            Heard: {transcript}
+                            La maqlay: {transcript}
                         </div>
                     )}
                 </>
@@ -740,7 +756,7 @@ export default function LoginPage() {
                                     ref={studentInputRef}
                                     className="input"
                                     type="text"
-                                    placeholder="Say or type your student ID"
+                                    placeholder="Ku dhawaaq ama qor nambarkaaga ardayga"
                                     value={studentId}
                                     onChange={(e) => {
                                         setStudentId(sanitizeStudentId(e.target.value));

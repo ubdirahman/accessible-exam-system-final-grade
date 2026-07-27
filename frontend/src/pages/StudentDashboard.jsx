@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useExam } from '../context/ExamContext';
@@ -6,12 +6,19 @@ import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
 import useConfirmDialog from '../hooks/useConfirmDialog';
+import {
+    SOMALI_LOGOUT_CONFIRMATION_PROMPT,
+    SOMALI_RECOGNITION_OPTIONS,
+    buildStudentDashboardSomaliSpeech,
+    somaliTtsOptions
+} from '../utils/somaliSpeech';
 
 function joinNamesForSpeech(names = []) {
-    if (!names.length) return 'none';
-    if (names.length === 1) return names[0];
-    if (names.length === 2) return `${names[0]} and ${names[1]}`;
-    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+    const cleanNames = names.map((name) => String(name || '').trim()).filter(Boolean);
+    if (!cleanNames.length) return 'ma jiraan';
+    if (cleanNames.length === 1) return cleanNames[0];
+    if (cleanNames.length === 2) return `${cleanNames[0]} iyo ${cleanNames[1]}`;
+    return `${cleanNames.slice(0, -1).join(', ')} iyo ${cleanNames[cleanNames.length - 1]}`;
 }
 
 function getLatestCompletedExam(exams = []) {
@@ -25,6 +32,35 @@ export default function StudentDashboard() {
     const { startExam, resetExamSession, ensureExamRecording, recordingState } = useExam();
     const { speak } = useTTS();
     const navigate = useNavigate();
+    const listeningControlsRef = useRef({
+        startListening: () => { },
+        stopListening: () => { }
+    });
+    const resumeListeningTimeoutRef = useRef(null);
+    const dashboardActiveRef = useRef(true);
+
+    const speakSomali = useCallback((text, options = {}) => {
+        const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
+        const speechOptions = { ...options };
+        const originalOnEnd = speechOptions.onEnd;
+
+        if (speechOptions.lang === 'so-SO') delete speechOptions.lang;
+        if (speechOptions.rate === 1.0) delete speechOptions.rate;
+        if (resumeListeningTimeoutRef.current) clearTimeout(resumeListeningTimeoutRef.current);
+
+        pauseListening();
+        speak(text, somaliTtsOptions({
+            ...speechOptions,
+            onEnd: () => {
+                if (originalOnEnd) originalOnEnd();
+                if (!dashboardActiveRef.current) return;
+
+                resumeListeningTimeoutRef.current = setTimeout(() => {
+                    if (dashboardActiveRef.current) resumeListening();
+                }, 350);
+            }
+        }));
+    }, [speak]);
 
     const [queueData, setQueueData] = useState(null);
     const [examData, setExamData] = useState(null);
@@ -45,7 +81,7 @@ export default function StudentDashboard() {
 
     const handleLogout = useCallback(async () => {
         setConfirmLogoutPending(true);
-        speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
+        speakSomali(SOMALI_LOGOUT_CONFIRMATION_PROMPT, { lang: 'so-SO', rate: 1.0 });
         const confirmed = await askConfirm({
             title: 'Logout Confirmation',
             message: 'Are you sure you want to log out of the system?',
@@ -60,9 +96,9 @@ export default function StudentDashboard() {
             navigate('/');
         } else {
             setConfirmLogoutPending(false);
-            speak('Ka bixitaankii waa la joojiyay.', { lang: 'so-SO', rate: 1.0 });
+            speakSomali('Ka bixitaankii waa la joojiyay.', { lang: 'so-SO', rate: 1.0 });
         }
-    }, [askConfirm, logout, navigate, resetExamSession, speak]);
+    }, [askConfirm, logout, navigate, resetExamSession, speakSomali]);
 
     const loadDashboardData = useCallback(async () => {
         setLoading(true);
@@ -92,63 +128,22 @@ export default function StudentDashboard() {
         }
     }, []);
 
-    const buildDashboardSpeech = useCallback((includeStartPrompt = true) => {
-        const totalCount = queueData?.totalCount || 0;
-        const completedCount = queueData?.completedCount || 0;
-        const completedNames = completedExams.map((exam) => exam.subjectName);
-        const remainingNames = remainingAfterCurrent.map((exam) => exam.subjectName);
-        const currentSubject = currentExam?.subjectName || currentExam?.title;
-        const currentTitle = currentExam?.title || currentExam?.subjectName;
-        const totalQuestions = examData?.questions?.length || 0;
-        const timeLimit = currentExam?.timeLimit || examData?.exam?.timeLimit || 0;
-
-        if (totalCount === 0) {
-            return [
-                `Kula soo dhawoow gacmo furan, ${user?.name || 'arday'}.`,
-                'Ma jiraan imtixaano hadda kuu qorshaysan oo aad u fadhiisan karto.',
-                'Fadlan dheh "ka bax" marka aad rabto inaad ka baxdo nidaamka.'
-            ].join(' ');
-        }
-
-        if (!currentExam) {
-            return [
-                `Kula soo dhawoow gacmo furan, ${user?.name || 'arday'}.`,
-                `Waxaad si guul leh u dhammaystirtay dhammaan ${completedCount} imtixaan oo kuu qorshaysnaa.`,
-                completedNames.length
-                    ? `Maaddooyinka aad u fadhiisatay ee aad dhammaystirtay waa: ${joinNamesForSpeech(completedNames)}.`
-                    : 'Wali ma aadan dhammaystirin wax imtixaan ah.',
-                'Ma jiraan imtixaano kale oo kuu dhiman.',
-                latestCompletedExam
-                    ? `Imtixaankii ugu dambeeyay ee aad dhammaystirtay wuxuu ahaa maaddada: ${latestCompletedExam.subjectName}.`
-                    : '',
-                'Dheh "ka bax" si aad uga baxdo nidaamka.'
-            ].filter(Boolean).join(' ');
-        }
-
-        return [
-            `Kula soo dhawoow gacmo furan, ${user?.name || 'arday'}.`,
-            `Waxaad leedahay wadar ahaan ${totalCount} imtixaan oo kuu qorshaysan.`,
-            completedCount > 0
-                ? `Waxaad mar hore si guul leh u dhammaystirtay ${completedCount} imtixaan oo kala ah: ${joinNamesForSpeech(completedNames)}.`
-                : 'Wali ma aadan dhammaystirin wax imtixaan ah.',
-            `Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentSubject}.`,
-            currentTitle && currentTitle !== currentSubject
-                ? `Ciwaanka rasmiga ah ee imtixaanku waa: ${currentTitle}.`
-                : '',
-            remainingNames.length
-                ? `Maaddadan ka dib, imtixaanada kale ee kuu dhiman waa: ${joinNamesForSpeech(remainingNames)}.`
-                : 'Imtixaankan ka dib, ma jiraan maaddooyin kale oo kuu dhiman.',
-            totalQuestions > 0 ? `Imtixaankani wuxuu ka kooban yahay ${totalQuestions} su'aalood.` : '',
-            timeLimit > 0 ? `Waxaad haysataa muddo dhan ${timeLimit} daqiiqo oo aad ku dhammayso.` : 'Imtixaankani waqti xaddidan ma laha.',
-            includeStartPrompt ? 'Miyaan bilaabaa imtixaanka hadda? Fadlan dheh haa ama maya.' : ''
-        ].filter(Boolean).join(' ');
-    }, [completedExams, currentExam, examData, latestCompletedExam, queueData, remainingAfterCurrent, user?.name]);
+    const buildDashboardSpeech = useCallback((includeStartPrompt = true) => buildStudentDashboardSomaliSpeech({
+        studentName: user?.name,
+        currentExam,
+        examData,
+        queueData,
+        completedExams,
+        remainingAfterCurrent,
+        latestCompletedExam,
+        includeStartPrompt
+    }), [completedExams, currentExam, examData, latestCompletedExam, queueData, remainingAfterCurrent, user?.name]);
 
     const speakDashboardSummary = useCallback((includeStartPrompt = true) => {
         const text = buildDashboardSpeech(includeStartPrompt);
         if (!text) return;
 
-        speak(text, { lang: 'so-SO', rate: 1.0 });
+        speakSomali(text, { lang: 'so-SO', rate: 1.0 });
         setWaitingRepeat(false);
 
         if (currentExam && includeStartPrompt) {
@@ -158,45 +153,43 @@ export default function StudentDashboard() {
             setWaitingStart(false);
             setConfirmStartPending(false);
         }
-    }, [buildDashboardSpeech, currentExam, speak]);
+    }, [buildDashboardSpeech, currentExam, speakSomali]);
 
     const speakCompletedSubjects = useCallback(() => {
         if (!completedExams.length) {
-            speak('Wali ma aadan dhammaystirin wax imtixaan ah.', { lang: 'so-SO' });
+            speakSomali('Wali ma aadan dhammaystirin wax imtixaan ah.', { lang: 'so-SO' });
             return;
         }
 
-        speak(`Waxaad si guul leh u dhammaystirtay ${completedExams.length} imtixaan oo kala ah: ${joinNamesForSpeech(completedExams.map((exam) => exam.subjectName))}.`, { lang: 'so-SO' });
-    }, [completedExams, speak]);
+        speakSomali(`Waxaad si guul leh u dhammaystirtay ${completedExams.length} imtixaan oo kala ah: ${joinNamesForSpeech(completedExams.map((exam) => exam.subjectName))}.`, { lang: 'so-SO' });
+    }, [completedExams, speakSomali]);
 
     const speakRemainingSubjects = useCallback(() => {
         if (!currentExam) {
-            speak('Ma jiraan imtixaano kale oo kuu dhiman.', { lang: 'so-SO' });
+            speakSomali('Ma jiraan imtixaano kale oo kuu dhiman.', { lang: 'so-SO' });
             return;
         }
 
         if (!remainingAfterCurrent.length) {
-            speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}. Imtixaankan ka dib, ma jiraan imtixaano kale oo kuu dhiman.`, { lang: 'so-SO' });
+            speakSomali(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}. Imtixaankan ka dib, ma jiraan imtixaano kale oo kuu dhiman.`, { lang: 'so-SO' });
             return;
         }
 
-        speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}. Imtixaanada ku xiga ee kuu dhiman waa: ${joinNamesForSpeech(remainingAfterCurrent.map((exam) => exam.examId || exam.subjectName))}.`, { lang: 'so-SO' });
-    }, [currentExam, remainingAfterCurrent, speak]);
+        speakSomali(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}. Imtixaanada ku xiga ee kuu dhiman waa: ${joinNamesForSpeech(remainingAfterCurrent.map((exam) => exam.subjectName || exam.title))}.`, { lang: 'so-SO' });
+    }, [currentExam, remainingAfterCurrent, speakSomali]);
 
     const requestStartConfirmation = useCallback(() => {
         if (!currentExam) {
-            speak('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
+            speakSomali('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
             return;
         }
 
-        setWaitingStart(true);
-        setConfirmStartPending(true);
-        speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-    }, [currentExam, speak]);
+        speakDashboardSummary(true);
+    }, [currentExam, speakDashboardSummary, speakSomali]);
 
     async function startExamNow() {
         if (!currentExam?.id) {
-            speak('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
+            speakSomali('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
             return;
         }
 
@@ -217,11 +210,11 @@ export default function StudentDashboard() {
 
             if (err.response?.status === 400 && msg.toLowerCase().includes('already')) {
                 await loadDashboardData();
-                speak('Imtixaankaas mar hore ayaad dhammaystirtay. Waan cusboonaysiiyay boggaaga waxaana kuu soo doortay imtixaanka ku xiga.', { lang: 'so-SO', rate: 1.0 });
+                speakSomali('Imtixaankaas mar hore ayaad dhammaystirtay. Waan cusboonaysiiyay boggaaga waxaana kuu soo doortay imtixaanka ku xiga.', { lang: 'so-SO', rate: 1.0 });
                 return;
             }
 
-            speak(msg, { lang: 'so-SO', rate: 1.0 });
+            speakSomali(msg, { lang: 'so-SO', rate: 1.0 });
         }
     }
 
@@ -253,10 +246,24 @@ export default function StudentDashboard() {
         if (waitingStart || waitingRepeat) {
             setWaitingStart(false);
             setConfirmStartPending(false);
-            setWaitingRepeat(true);
-            speak('Haye. Dheh ku celi warbixinta si aad mar kale u maqasho qorshahaaga, ama dheh ka bax markaad diyaar tahay.', { lang: 'so-SO', rate: 1.0 });
+            setWaitingRepeat(false);
+            speakDashboardSummary(!!currentExam);
         }
-    }, [confirmLogoutPending, triggerCancel, speak, waitingRepeat, waitingStart]);
+    }, [confirmLogoutPending, currentExam, speakDashboardSummary, triggerCancel, waitingRepeat, waitingStart]);
+
+    const repeatActivePrompt = useCallback(() => {
+        if (confirmLogoutPending) {
+            speakSomali(SOMALI_LOGOUT_CONFIRMATION_PROMPT, { lang: 'so-SO', rate: 1.0 });
+            return;
+        }
+
+        if (confirmStartPending || currentExam) {
+            speakDashboardSummary(!!currentExam);
+            return;
+        }
+
+        speakDashboardSummary(false);
+    }, [confirmLogoutPending, confirmStartPending, currentExam, speakDashboardSummary, speakSomali]);
 
     const commandMap = {
         'start exam': () => requestStartConfirmation(),
@@ -266,48 +273,89 @@ export default function StudentDashboard() {
         'begin next exam': () => requestStartConfirmation(),
         'take exam': () => requestStartConfirmation(),
         'go to exam': () => requestStartConfirmation(),
-        'repeat instructions': () => speakDashboardSummary(...[!!currentExam]),
+        'bilow imtixaan': () => requestStartConfirmation(),
+        'bilaab imtixaan': () => requestStartConfirmation(),
+        'ii bilow imtixaanka': () => requestStartConfirmation(),
+        'bilow': () => requestStartConfirmation(),
+        'diyaar': handleAffirmative,
+        'waan diyaar ahay': handleAffirmative,
+        'repeat instructions': () => speakDashboardSummary(!!currentExam),
         'repeat summary': () => speakDashboardSummary(false),
         'repeat dashboard': () => speakDashboardSummary(false),
         'dashboard summary': () => speakDashboardSummary(false),
         'read summary': () => speakDashboardSummary(false),
         'tell me summary': () => speakDashboardSummary(false),
         'tell summary': () => speakDashboardSummary(false),
+        'ku celi warbixinta': () => speakDashboardSummary(!!currentExam),
+        'ku celi': () => speakDashboardSummary(!!currentExam),
+        'soo celi': () => speakDashboardSummary(!!currentExam),
+        'mar kale': repeatActivePrompt,
         'how many exams': () => speakDashboardSummary(false),
         'how many subjects': () => speakDashboardSummary(false),
+        'imtixaanada': () => speakDashboardSummary(false),
         'current subject': () => {
             if (currentExam) {
-                speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
+                speakSomali(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
             } else {
-                speak('Ma jiraan imtixaano hadda kuu furan oo aad u fadhiisan karto.', { lang: 'so-SO', rate: 1.0 });
+                speakSomali('Ma jiro imtixaan hadda kuu furan.', { lang: 'so-SO', rate: 1.0 });
             }
         },
         'what am i taking': () => {
             if (currentExam) {
-                speak(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
+                speakSomali(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
             } else {
-                speak('Ma jiraan imtixaano hadda kuu furan oo aad u fadhiisan karto.', { lang: 'so-SO', rate: 1.0 });
+                speakSomali('Ma jiro imtixaan hadda kuu furan.', { lang: 'so-SO', rate: 1.0 });
+            }
+        },
+        'maaddada hadda': () => {
+            if (currentExam) {
+                speakSomali(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
+            } else {
+                speakSomali('Ma jiro imtixaan hadda kuu furan.', { lang: 'so-SO', rate: 1.0 });
+            }
+        },
+        'maadada hadda': () => {
+            if (currentExam) {
+                speakSomali(`Hadda waxaad u fadhiisanaysaa imtixaanka maaddada ${currentExam.subjectName}.`, { lang: 'so-SO', rate: 1.0 });
+            } else {
+                speakSomali('Ma jiro imtixaan hadda kuu furan.', { lang: 'so-SO', rate: 1.0 });
             }
         },
         'what is next': () => speakRemainingSubjects(),
         'remaining subjects': () => speakRemainingSubjects(),
         'remaining exams': () => speakRemainingSubjects(),
+        'imtixaanada haray': () => speakRemainingSubjects(),
+        'imtixaanada kuu haray': () => speakRemainingSubjects(),
         'completed subjects': () => speakCompletedSubjects(),
+        'imtixaanada dhammaaday': () => speakCompletedSubjects(),
+        'imtixaanada dhammaystiran': () => speakCompletedSubjects(),
         'refresh dashboard': () => loadDashboardData(),
         'reload dashboard': () => loadDashboardData(),
         'refresh': () => loadDashboardData(),
         'reload': () => loadDashboardData(),
+        'cusboonaysii': () => loadDashboardData(),
+        'cusboonaysii bogga': () => loadDashboardData(),
         'help me': () => {
-            speak(
+            speakSomali(
                 currentExam
-                    ? 'Waxaad dhihi kartaa: "bilow imtixaan", "ku celi warbixinta", "imtixaanada dhammaaday", "imtixaanada haray", "cusboonaysii bogga", ama "ka bax".'
-                    : 'Waxaad dhihi kartaa: "ku celi warbixinta", "imtixaanada dhammaaday", "cusboonaysii bogga", ama "ka bax".',
+                    ? 'Waxaad dhihi kartaa: bilow imtixaan, haa, maya, ku celi warbixinta, imtixaanada dhammaaday, imtixaanada haray, cusboonaysii bogga, ama ka bax.'
+                    : 'Waxaad dhihi kartaa: ku celi warbixinta, imtixaanada dhammaaday, cusboonaysii bogga, ama ka bax.',
+                { lang: 'so-SO', rate: 1.0 }
+            );
+            setWaitingRepeat(true);
+        },
+        'caawi': () => {
+            speakSomali(
+                currentExam
+                    ? 'Waxaad dhihi kartaa: bilow imtixaan, haa, maya, ku celi warbixinta, imtixaanada dhammaaday, imtixaanada haray, cusboonaysii bogga, ama ka bax.'
+                    : 'Waxaad dhihi kartaa: ku celi warbixinta, imtixaanada dhammaaday, cusboonaysii bogga, ama ka bax.',
                 { lang: 'so-SO', rate: 1.0 }
             );
             setWaitingRepeat(true);
         },
         'yes': handleAffirmative,
         'haa': handleAffirmative,
+        'haye': handleAffirmative,
         'no': handleNegative,
         'maya': handleNegative,
         'logout': () => handleLogout(),
@@ -316,45 +364,28 @@ export default function StudentDashboard() {
         'exit': () => handleLogout(),
         'logout system': () => handleLogout(),
         'sign out of system': () => handleLogout(),
-        'try': () => {
-            if (confirmLogoutPending) {
-                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else if (confirmStartPending) {
-                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else {
-                speakDashboardSummary(false);
-            }
-        },
-        'again': () => {
-            if (confirmLogoutPending) {
-                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else if (confirmStartPending) {
-                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else {
-                speakDashboardSummary(false);
-            }
-        },
-        'try again': () => {
-            if (confirmLogoutPending) {
-                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else if (confirmStartPending) {
-                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else {
-                speakDashboardSummary(false);
-            }
-        },
-        'repeat': () => {
-            if (confirmLogoutPending) {
-                speak('Ma hubtaa inaad rabto inaad ka baxdo? Dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else if (confirmStartPending) {
-                speak('Miyaan bilaabaa imtixaankaaga hadda? Fadlan dheh haa ama maya.', { lang: 'so-SO', rate: 1.0 });
-            } else {
-                speakDashboardSummary(false);
-            }
-        }
+        'ka bax': () => handleLogout(),
+        'bax': () => handleLogout(),
+        'try': repeatActivePrompt,
+        'again': repeatActivePrompt,
+        'try again': repeatActivePrompt,
+        'repeat': repeatActivePrompt
     };
 
-    const { isListening, startListening, stopListening } = useVoiceCommands(commandMap, true);
+    const { isListening, startListening, stopListening } = useVoiceCommands(commandMap, true, null, SOMALI_RECOGNITION_OPTIONS);
+
+    useEffect(() => {
+        listeningControlsRef.current = { startListening, stopListening };
+    }, [startListening, stopListening]);
+
+    useEffect(() => {
+        dashboardActiveRef.current = true;
+
+        return () => {
+            dashboardActiveRef.current = false;
+            if (resumeListeningTimeoutRef.current) clearTimeout(resumeListeningTimeoutRef.current);
+        };
+    }, []);
 
     useEffect(() => {
         loadDashboardData();
