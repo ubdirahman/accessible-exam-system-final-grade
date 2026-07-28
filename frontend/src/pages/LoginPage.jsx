@@ -31,10 +31,11 @@ const ENGLISH_ID_TTS_OPTIONS = {
 };
 
 export default function LoginPage() {
-    const [mode, setMode] = useState('student'); // 'student' | 'admin' | 'teacher'
+    const [mode, setMode] = useState('admin'); // 'student' | 'admin' | 'teacher'
     const [studentId, setStudentId] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [studentStatus, setStudentStatus] = useState('');
@@ -664,26 +665,43 @@ export default function LoginPage() {
         };
     }, [mode, stop, setAudioPlayingState]);
 
+    const roleConfig = {
+        student: {
+            title: 'Student Login',
+            subtitle: 'Use your student ID or voice guidance to continue.',
+            button: 'Continue With ID',
+            secureText: 'Voice-guided student access'
+        },
+        admin: {
+            title: 'Admin Login',
+            subtitle: 'Welcome back! Please sign in to continue.',
+            button: 'Login to Dashboard',
+            secureText: 'Secure admin access'
+        },
+        teacher: {
+            title: 'Teacher Login',
+            subtitle: 'Welcome back! Please sign in to continue.',
+            button: 'Login to Dashboard',
+            secureText: 'Secure teacher access'
+        }
+    }[mode];
+
+    const switchMode = (nextMode) => {
+        setMode(nextMode);
+        setError('');
+    };
+
     return (
-        <div className="page login-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="page login-page modern-login-page">
             {mode === 'student' && (
                 <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
                     {studentStatus}
                 </div>
             )}
-            {/* Voice Indicator */}
+
             {mode === 'student' && (
                 <>
-                    <div className={`voice-indicator student-voice-indicator ${isListening ? 'listening' : ''}`}
-                        style={{
-                            position: 'fixed',
-                            top: 'clamp(80px, 15vh, 120px)',
-                            left: '50%',
-                            transform: 'translateX(-50%)',
-                            zIndex: 1000,
-                            width: 'max-content',
-                            maxWidth: '90vw'
-                        }}>
+                    <div className={`voice-indicator student-voice-indicator ${isListening ? 'listening' : ''}`}>
                         <div className="voice-dot"></div>
                         <span>
                             {voiceStep === 'CONFIRM_ID' ? 'Dheh haa ama maya' :
@@ -692,183 +710,251 @@ export default function LoginPage() {
                                 isListening ? (lastCommand || 'Dhageysanayaa ID-ga...') : 'Codku wuu dansan yahay'}
                         </span>
                     </div>
-                    {/* live raw transcript */}
                     {isListening && transcript && voiceStep === 'LISTENING_ID' && (
-                        <div className="transcript student-login-transcript" style={{ position: 'fixed', top: 'clamp(120px,18vh,160px)', left: '50%', transform: 'translateX(-50%)', fontSize: 'var(--font-size-sm)' }}>
+                        <div className="transcript student-login-transcript">
                             La maqlay: {transcript}
                         </div>
                     )}
                 </>
             )}
-            <div className="login-shell" style={{ width: '100%', maxWidth: 520 }}>
-                {/* Header */}
-                <div className="text-center login-header" style={{ marginBottom: 40 }}>
-                    <div style={{ fontSize: 48, marginBottom: 12 }} aria-hidden="true">
-                        <i className="fa-solid fa-universal-access"></i>
-                    </div>
-                    <h1 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 800, marginBottom: 8 }}>
-                        Accessible Exam System
-                    </h1>
-                    <p className="text-muted" style={{ fontSize: 'var(--font-size-base)' }}>
-                        Voice-controlled examination platform
-                    </p>
-                </div>
 
-                {/* Role Tabs */}
-                <div className="section-tabs login-role-tabs" style={{ justifyContent: 'center', marginBottom: 24 }}>
-                    <button
-                        className={`section-tab ${mode === 'student' ? 'active' : ''}`}
-                        onClick={() => { setMode('student'); setError(''); }}
-                        aria-label="Switch to student login"
-                    >
-                        <i className="fa-solid fa-user-graduate" aria-hidden="true"></i> Student
-                    </button>
-                    <button
-                        className={`section-tab ${mode === 'admin' ? 'active' : ''}`}
-                        onClick={() => { setMode('admin'); setError(''); }}
-                        aria-label="Switch to admin login"
-                    >
-                        <i className="fa-solid fa-shield-halved" aria-hidden="true"></i> Admin
-                    </button>
-                    <button
-                        className={`section-tab ${mode === 'teacher' ? 'active' : ''}`}
-                        onClick={() => { setMode('teacher'); setError(''); }}
-                        aria-label="Switch to teacher login"
-                    >
-                        <i className="fa-solid fa-chalkboard-user" aria-hidden="true"></i> Teacher
-                    </button>
-                </div>
+            <div className="login-background-dots" aria-hidden="true"></div>
+            <div className="login-orb login-orb-left" aria-hidden="true"></div>
+            <div className="login-orb login-orb-right" aria-hidden="true"></div>
 
-                {/* Login Card */}
-                <div className="card login-card">
-                    {error && (
-                        <div className="badge badge-danger" style={{ marginBottom: 16, width: '100%', justifyContent: 'center', padding: 14 }} role="alert">
-                            <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> {error}
+            <main className="modern-login-shell">
+                <header className="university-login-header" aria-label="Jamhuriya University of Science and Technology">
+                    <img
+                        className="university-banner-image"
+                        src="/assets/brand/just-logo.png"
+                        alt="Jamhuriya University of Science and Technology"
+                    />
+                </header>
+
+                <nav className="modern-role-tabs" aria-label="Login role">
+                    <button
+                        type="button"
+                        className={mode === 'student' ? 'active' : ''}
+                        onClick={() => switchMode('student')}
+                    >
+                        <i className="fa-solid fa-graduation-cap" aria-hidden="true"></i>
+                        Student
+                    </button>
+                    <button
+                        type="button"
+                        className={mode === 'admin' ? 'active' : ''}
+                        onClick={() => switchMode('admin')}
+                    >
+                        <i className="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                        Admin
+                    </button>
+                    <button
+                        type="button"
+                        className={mode === 'teacher' ? 'active' : ''}
+                        onClick={() => switchMode('teacher')}
+                    >
+                        <i className="fa-solid fa-user-tie" aria-hidden="true"></i>
+                        Teacher
+                    </button>
+                </nav>
+
+                <section className="modern-login-grid">
+                    <aside className="login-feature-list" aria-label="Platform features">
+                        <div className="login-feature tone-blue">
+                            <span><i className="fa-solid fa-shield-halved" aria-hidden="true"></i></span>
+                            <div>
+                                <strong>Secure & Reliable</strong>
+                                <p>Enterprise-grade security to protect your data and exams.</p>
+                            </div>
                         </div>
-                    )}
+                        <div className="login-feature tone-green">
+                            <span><i className="fa-solid fa-wave-square" aria-hidden="true"></i></span>
+                            <div>
+                                <strong>Voice Controlled</strong>
+                                <p>Navigate and interact using advanced voice technology.</p>
+                            </div>
+                        </div>
+                        <div className="login-feature tone-purple">
+                            <span><i className="fa-solid fa-chart-simple" aria-hidden="true"></i></span>
+                            <div>
+                                <strong>Smart Analytics</strong>
+                                <p>Real-time insights and reports to track performance.</p>
+                            </div>
+                        </div>
+                        <div className="login-feature tone-orange">
+                            <span><i className="fa-solid fa-users" aria-hidden="true"></i></span>
+                            <div>
+                                <strong>Accessible for All</strong>
+                                <p>Designed for inclusivity and ease of use for everyone.</p>
+                            </div>
+                        </div>
+                    </aside>
 
-                    {mode === 'student' ? (
-                        <form onSubmit={handleStudentLogin}>
-                            <div className="input-group">
+                    <section className="modern-login-card" aria-label={roleConfig.title}>
+                        <div className="login-card-heading">
+                            <h2>{roleConfig.title}</h2>
+                            <p>{roleConfig.subtitle}</p>
+                        </div>
+
+                        {error && (
+                            <div className="modern-login-error" role="alert">
+                                <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                {error}
+                            </div>
+                        )}
+
+                        {mode === 'student' ? (
+                            <form onSubmit={handleStudentLogin} className="modern-login-form">
                                 <label htmlFor="studentId">Student ID</label>
-                                <input
-                                    id="studentId"
-                                    ref={studentInputRef}
-                                    className="input"
-                                    type="text"
-                                    placeholder="Ku dhawaaq ama qor nambarkaaga ardayga"
-                                    value={studentId}
-                                    onChange={(e) => {
-                                        setStudentId(sanitizeStudentId(e.target.value));
-                                        setSilenceConfirmedId('');
-                                        setError('');
-                                        setIdConfirmationMode('login');
-                                        markStudentIdActivity();
-                                        if (voiceStep === 'CONFIRM_ID') {
-                                            setVoiceStep('LISTENING_ID');
-                                        }
-                                    }}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleStudentLogin(e)}
-                                    disabled={isAudioPlaying}
-                                    aria-label="Student ID Input"
-                                    required
-                                    autoFocus
-                                    aria-required="true"
-                                    style={{
-                                        borderColor: (voiceStep === 'CONFIRM_ID' || voiceStep === 'CONFIRM_CLEAR') ? 'var(--accent-primary)' : undefined,
-                                        boxShadow: (voiceStep === 'CONFIRM_ID' || voiceStep === 'CONFIRM_CLEAR') ? '0 0 0 4px rgba(37, 99, 235, 0.1)' : undefined
-                                    }}
-                                />
-                            </div>
+                                <div className="modern-input-wrap">
+                                    <i className="fa-solid fa-id-card" aria-hidden="true"></i>
+                                    <input
+                                        id="studentId"
+                                        ref={studentInputRef}
+                                        type="text"
+                                        placeholder="Ku dhawaaq ama qor nambarkaaga ardayga"
+                                        value={studentId}
+                                        onChange={(e) => {
+                                            setStudentId(sanitizeStudentId(e.target.value));
+                                            setSilenceConfirmedId('');
+                                            setError('');
+                                            setIdConfirmationMode('login');
+                                            markStudentIdActivity();
+                                            if (voiceStep === 'CONFIRM_ID') {
+                                                setVoiceStep('LISTENING_ID');
+                                            }
+                                        }}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleStudentLogin(e)}
+                                        disabled={isAudioPlaying}
+                                        aria-label="Student ID Input"
+                                        required
+                                        autoFocus
+                                        aria-required="true"
+                                    />
+                                </div>
+                                <button className="modern-submit" type="submit" disabled={loading}>
+                                    {loading ? (
+                                        <><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>
+                                    ) : voiceStep === 'CONFIRM_ID' ? (
+                                        idConfirmationMode === 'save'
+                                            ? <><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Save Confirmed ID</>
+                                            : <><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Confirm And Login</>
+                                    ) : voiceStep === 'CONFIRM_CLEAR' ? (
+                                        <><i className="fa-solid fa-eraser" aria-hidden="true"></i> Confirm Clear ID</>
+                                    ) : (
+                                        <><i className="fa-solid fa-lock" aria-hidden="true"></i> {roleConfig.button}</>
+                                    )}
+                                </button>
+                            </form>
+                        ) : (
+                            <form onSubmit={mode === 'admin' ? handleAdminLogin : handleTeacherLogin} className="modern-login-form">
+                                <label htmlFor="login-email">Email</label>
+                                <div className="modern-input-wrap">
+                                    <i className="fa-regular fa-envelope" aria-hidden="true"></i>
+                                    <input
+                                        id="login-email"
+                                        type="email"
+                                        placeholder={mode === 'admin' ? 'admin@exam.com' : 'teacher@school.com'}
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        required
+                                        autoFocus
+                                    />
+                                </div>
 
-                            <button className="btn btn-primary btn-lg student-login-submit" style={{ width: '100%' }} type="submit" disabled={loading}>
-                                {loading
-                                    ? (<><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>)
-                                    : (voiceStep === 'CONFIRM_ID'
-                                        ? (
-                                            idConfirmationMode === 'save'
-                                                ? (<><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Save Confirmed ID</>)
-                                                : (<><i className="fa-solid fa-circle-check" aria-hidden="true"></i> Confirm And Login</>)
-                                        )
-                                        : voiceStep === 'CONFIRM_CLEAR'
-                                            ? (<><i className="fa-solid fa-eraser" aria-hidden="true"></i> Confirm Clear ID</>)
-                                            : (<><i className="fa-solid fa-id-card" aria-hidden="true"></i> Continue With ID</>)
-                                    )
-                                }
-                            </button>
-                        </form>
-                    ) : mode === 'admin' ? (
-                        <form onSubmit={handleAdminLogin}>
-                            <div className="input-group">
-                                <label htmlFor="email">Email</label>
-                                <input
-                                    id="email"
-                                    className="input"
-                                    type="email"
-                                    placeholder="admin@exam.com"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    required
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="input-group">
-                                <label htmlFor="password">Password</label>
-                                <input
-                                    id="password"
-                                    className="input"
-                                    type="password"
-                                    placeholder="Enter password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <button className="btn btn-primary btn-lg" style={{ width: '100%' }} type="submit" disabled={loading}>
-                                {loading
-                                    ? (<><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>)
-                                    : (<><i className="fa-solid fa-lock" aria-hidden="true"></i> Admin Login</>)
-                                }
-                            </button>
-                        </form>
-                    ) : (
-                        <form onSubmit={handleTeacherLogin}>
-                            <div className="input-group">
-                                <label htmlFor="email">Email</label>
-                                <input
-                                    id="email"
-                                    className="input"
-                                    type="email"
-                                    placeholder="teacher@school.com"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    required
-                                    autoFocus
-                                />
-                            </div>
-                            <div className="input-group">
-                                <label htmlFor="password">Password</label>
-                                <input
-                                    id="password"
-                                    className="input"
-                                    type="password"
-                                    placeholder="Enter password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <button className="btn btn-primary btn-lg" style={{ width: '100%' }} type="submit" disabled={loading}>
-                                {loading
-                                    ? (<><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>)
-                                    : (<><i className="fa-solid fa-lock" aria-hidden="true"></i> Teacher Login</>)
-                                }
-                            </button>
-                        </form>
-                    )}
+                                <label htmlFor="login-password">Password</label>
+                                <div className="modern-input-wrap">
+                                    <i className="fa-solid fa-lock" aria-hidden="true"></i>
+                                    <input
+                                        id="login-password"
+                                        type={showPassword ? 'text' : 'password'}
+                                        placeholder="Enter your password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        className="password-toggle"
+                                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                        onClick={() => setShowPassword((visible) => !visible)}
+                                    >
+                                        <i className={`fa-regular ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`} aria-hidden="true"></i>
+                                    </button>
+                                </div>
 
-                </div>
-            </div>
+                                <div className="login-form-row">
+                                    <label className="remember-check">
+                                        <input type="checkbox" />
+                                        <span>Remember me</span>
+                                    </label>
+                                    <button type="button">Forgot password?</button>
+                                </div>
+
+                                <button className="modern-submit" type="submit" disabled={loading}>
+                                    {loading
+                                        ? <><i className="fa-solid fa-hourglass-half" aria-hidden="true"></i> Logging in...</>
+                                        : <><i className="fa-solid fa-lock" aria-hidden="true"></i> {roleConfig.button}</>
+                                    }
+                                </button>
+                            </form>
+                        )}
+
+                        <div className="secure-divider">
+                            <span></span>
+                            <strong>{roleConfig.secureText}</strong>
+                            <span></span>
+                        </div>
+                        <div className="protected-session">
+                            <i className="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                            Your session is protected
+                        </div>
+                    </section>
+
+                    <aside className="login-illustration" aria-hidden="true">
+                        <div className="voice-bubble"><i className="fa-solid fa-wave-square"></i></div>
+                        <div className="shield-bubble"><i className="fa-solid fa-shield-halved"></i></div>
+                        <div className="lock-bubble"><i className="fa-solid fa-lock"></i></div>
+                        <div className="laptop-scene">
+                            <div className="laptop-screen">
+                                <span></span>
+                                <span></span>
+                                <div><i className="fa-solid fa-universal-access"></i></div>
+                                <span></span>
+                                <span></span>
+                            </div>
+                            <div className="laptop-base"></div>
+                        </div>
+                    </aside>
+                </section>
+
+                <section className="login-trust-bar" aria-label="System highlights">
+                    <div>
+                        <span className="tone-blue"><i className="fa-solid fa-shield-halved" aria-hidden="true"></i></span>
+                        <strong>99.9%</strong>
+                        <p>System Uptime</p>
+                    </div>
+                    <div>
+                        <span className="tone-green"><i className="fa-solid fa-bolt" aria-hidden="true"></i></span>
+                        <strong>Fast & Responsive</strong>
+                        <p>Optimized Performance</p>
+                    </div>
+                    <div>
+                        <span className="tone-purple"><i className="fa-solid fa-users" aria-hidden="true"></i></span>
+                        <strong>Trusted by 1000+</strong>
+                        <p>Institutions Worldwide</p>
+                    </div>
+                    <div>
+                        <span className="tone-orange"><i className="fa-solid fa-headset" aria-hidden="true"></i></span>
+                        <strong>24/7 Support</strong>
+                        <p>We're here to help</p>
+                    </div>
+                </section>
+            </main>
+
+            <footer className="modern-login-footer">
+                &copy; 2025 Accessible Exam System. All rights reserved.
+            </footer>
         </div>
     );
 }

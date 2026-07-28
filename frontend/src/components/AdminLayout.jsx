@@ -10,6 +10,8 @@ export default function AdminLayout({ children }) {
     const location = useLocation();
     const navigate = useNavigate();
     const [myClass, setMyClass] = useState(null);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [theme, setTheme] = useState(() => localStorage.getItem('aes-theme') || 'light');
     const { confirmDialog, askConfirm } = useConfirmDialog();
 
     const fetchClass = useCallback(async () => {
@@ -25,8 +27,16 @@ export default function AdminLayout({ children }) {
         }
     }, [user]);
 
-    // Cusboonaysiin toos ah (Automatic Update) 30-kii ilbiriqsiba mar
     useAutoUpdate(fetchClass, 30000);
+
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('aes-theme', theme);
+    }, [theme]);
+
+    useEffect(() => {
+        setSidebarOpen(false);
+    }, [location.pathname]);
 
     const handleLogout = async () => {
         const confirmed = await askConfirm({
@@ -45,8 +55,22 @@ export default function AdminLayout({ children }) {
     const brandIcon = user?.role === 'teacher'
         ? 'fa-solid fa-chalkboard-user'
         : user?.role === 'super_admin'
-            ? 'fa-solid fa-compass'
+            ? 'fa-solid fa-graduation-cap'
             : 'fa-solid fa-shield-halved';
+
+    const roleLabel = user?.role === 'teacher'
+        ? 'Teacher'
+        : user?.role === 'super_admin'
+            ? 'Super Admin'
+            : 'Faculty Admin';
+
+    const roleSubtitle = user?.role === 'teacher'
+        ? 'Class Instructor'
+        : user?.role === 'super_admin'
+            ? 'System Administrator'
+            : 'Faculty Administrator';
+
+    const userInitial = (user?.name || roleLabel || 'U').trim().charAt(0).toUpperCase();
 
     const navItems = (() => {
         if (user?.role === 'teacher') {
@@ -69,7 +93,6 @@ export default function AdminLayout({ children }) {
                 { path: '/admin/reports', label: 'Reports', iconClass: 'fa-solid fa-chart-column' },
             ];
         }
-        // faculty admin
         return [
             { path: '/admin/dashboard', label: 'Overview', iconClass: 'fa-solid fa-house' },
             { path: '/admin/exams', label: 'Exams', iconClass: 'fa-solid fa-clipboard-list' },
@@ -84,27 +107,29 @@ export default function AdminLayout({ children }) {
     })();
 
     return (
-        <div className="page admin-shell">
-            {/* Sidebar on the left */}
+        <div className={`page admin-shell ${sidebarOpen ? 'sidebar-open' : ''}`}>
             <aside className="admin-sidebar">
                 <div className="navbar-brand sidebar-brand">
-                    <span className="icon" aria-hidden="true">
+                    <span className="brand-mark" aria-hidden="true">
                         <i className={brandIcon}></i>
                     </span>
+                    <div className="sidebar-title">
+                        Accessible Exam
+                        <span>System</span>
+                    </div>
+                </div>
+
+                <div className="sidebar-profile">
+                    <div className="sidebar-avatar" aria-hidden="true">
+                        <i className="fa-solid fa-user"></i>
+                        <span className="online-dot"></span>
+                    </div>
                     <div>
-                        <div className="sidebar-title">
-                            {user?.role === 'teacher'
-                                ? 'Teacher Portal'
-                                : user?.role === 'super_admin'
-                                    ? 'Super Admin'
-                                    : 'Faculty Admin IT'}
-                        </div>
-                        <div className="sidebar-subtitle">
-                            {user?.name || 'User'} 
+                        <div className="sidebar-profile-name">{roleLabel}</div>
+                        <div className="sidebar-profile-role">
+                            {roleSubtitle}
                             {user?.role === 'teacher' && (myClass || user?.classId?.name) && (
-                                <div style={{ fontSize: 10, opacity: 0.8, marginTop: 2 }}>
-                                    <i className="fa-solid fa-graduation-cap"></i> {myClass?.name || user.classId.name || 'Assigned Class'}
-                                </div>
+                                <span>{myClass?.name || user.classId.name || 'Assigned Class'}</span>
                             )}
                         </div>
                     </div>
@@ -128,16 +153,65 @@ export default function AdminLayout({ children }) {
 
                 <div className="sidebar-footer">
                     <button className="btn btn-secondary btn-sm" style={{ width: '100%' }} onClick={handleLogout}>
+                        <i className="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
                         Logout
                     </button>
                 </div>
             </aside>
 
-            {/* Main content area on the right */}
+            <button
+                type="button"
+                className="sidebar-scrim"
+                aria-label="Close navigation"
+                onClick={() => setSidebarOpen(false)}
+            />
+
             <div className="admin-main">
-                <main className="fade-in">
+                <header className="admin-topbar">
+                    <div className="topbar-left">
+                        <button
+                            type="button"
+                            className="topbar-icon topbar-menu"
+                            aria-label="Toggle navigation"
+                            onClick={() => setSidebarOpen((open) => !open)}
+                        >
+                            <i className="fa-solid fa-bars" aria-hidden="true"></i>
+                        </button>
+                        <label className="topbar-search">
+                            <span className="sr-only">Search anything</span>
+                            <i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                            <input type="search" placeholder="Search anything..." />
+                            <i className="fa-solid fa-search" aria-hidden="true"></i>
+                        </label>
+                    </div>
+                    <div className="topbar-actions">
+                        <button type="button" className="topbar-icon notification-button" aria-label="Notifications">
+                            <i className="fa-regular fa-bell" aria-hidden="true"></i>
+                            <span>6</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="topbar-icon"
+                            aria-label="Toggle theme"
+                            onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+                        >
+                            <i className={`fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`} aria-hidden="true"></i>
+                        </button>
+                        <div className="topbar-user">
+                            <div className="topbar-avatar" aria-hidden="true">{userInitial}</div>
+                            <span>{roleLabel}</span>
+                            <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                        </div>
+                    </div>
+                </header>
+
+                <main className="admin-content fade-in">
                     {children}
                 </main>
+
+                <footer className="admin-footer">
+                    &copy; 2025 Accessible Exam System. All rights reserved.
+                </footer>
             </div>
             {confirmDialog}
         </div>

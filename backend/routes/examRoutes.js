@@ -2,9 +2,6 @@ const express = require('express');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const multer = require('multer');
-const xlsx = require('xlsx');
-const mammoth = require('mammoth');
-const pdfParse = require('pdf-parse');
 const { verifyToken, requireAdmin, requireStudent, requireAdminOrTeacher } = require('../middleware/auth');
 const Exam = require('../models/Exam');
 const Section = require('../models/Section');
@@ -17,6 +14,7 @@ const Student = require('../models/Student');
 const axios = require('axios');
 const { buildStudentExamQueue } = require('../utils/studentExamQueue');
 const { deleteRecordingFile } = require('../utils/examRecordingStorage');
+const { ImportFormatError, parseExamFile } = require('../utils/examFileImport');
 
 // Multer memory storage (no files saved to disk)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -101,10 +99,14 @@ async function recomputeResult(examId, studentId) {
    ============================================================ */
 
 /* ----------------------------------------------------------
-   EXAM FILE IMPORT: Excel, Word (.docx), PDF
+   EXAM FILE IMPORT: Excel, Word (.doc/.docx), PDF
    POST /import-file
-   Expected file format (one question per row):
-     Section | Type | Question | Options (A|B|C|D) | Correct | Points | TimeLimit(first row)
+   Supports tabular files and plain text:
+     Section | Type | Question | A | B | C | D | Correct | Points
+     1. Question text
+     A. Option text
+     B. Option text
+     Answer: A
    ---------------------------------------------------------- */
 router.post('/import-file', verifyToken, requireAdminOrTeacher, upload.single('file'), async (req, res) => {
     try {
@@ -115,129 +117,61 @@ router.post('/import-file', verifyToken, requireAdminOrTeacher, upload.single('f
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
         if (!classId) return res.status(400).json({ message: 'classId is required.' });
 
-        const mime = req.file.mimetype;
-        const originalName = req.file.originalname.toLowerCase();
-        let rows = [];
+        const { title: examTitle, timeLimit: examTimeLimit, sections: sectionsData } = await parseExamFile(req.file);
 
-        // ---- Parse file into 2D array of rows ----
-        if (mime.includes('sheet') || mime.includes('excel') || originalName.endsWith('.xlsx') || originalName.endsWith('.xls')) {
-            const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            rows = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-        } else if (mime.includes('wordprocessingml') || mime.includes('msword') || originalName.endsWith('.docx') || originalName.endsWith('.doc')) {
-            const result = await mammoth.extractRawText({ buffer: req.file.buffer });
-            rows = result.value.split('\n').filter(l => l.trim()).map(l => l.includes('\t') ? l.split('\t') : l.split(',').map(p => p.trim()));
-        } else if (mime === 'application/pdf' || originalName.endsWith('.pdf')) {
-            const result = await pdfParse(req.file.buffer);
-            rows = result.text.split('\n').filter(l => l.trim()).map(l => l.includes('\t') ? l.split('\t') : l.split(',').map(p => p.trim()));
-        } else {
-            return res.status(400).json({ message: 'Unsupported file type. Use Excel, Word, or PDF.' });
-        }
-
-        if (rows.length < 2) return res.status(400).json({ message: 'File has too few rows. Need at least a header row and one question.' });
-
-        // ---- Parse rows into exam structure ----
-        // Expected columns: Section | Type | Question | A | B | C | D | Correct | Points
-        // First data row can have: title in col0, timeLimit in col1 if it starts with metadata marker
-        const norm = (s) => String(s || '').toLowerCase().trim();
-
-        // Try to detect header row
-        const headerRow = rows[0].map(c => norm(c));
-        const isHeader = headerRow.some(h => ['section','type','question','questiontext'].includes(h));
-        const dataRows = isHeader ? rows.slice(1) : rows;
-
-        // Column index detection
-        const hdr = isHeader ? headerRow : ['section','type','question','a','b','c','d','correct','points'];
-        const ci = (names) => { for (const n of names) { const i = hdr.indexOf(n); if (i !== -1) return i; } return -1; };
-        const sectionIdx = ci(['section']);
-        const typeIdx    = ci(['type']);
-        const qIdx       = ci(['question','questiontext','q']);
-        const aIdx       = ci(['a','option_a','option a']);
-        const bIdx       = ci(['b','option_b','option b']);
-        const cIdx       = ci(['c','option_c','option c']);
-        const dIdx       = ci(['d','option_d','option d']);
-        const corrIdx    = ci(['correct','answer','correctanswer','correct answer']);
-        const ptsIdx     = ci(['points','pts','marks','score']);
-        const titleIdx   = ci(['title','examtitle','exam title']);
-        const tlIdx      = ci(['timelimit','time limit','time','minutes']);
-
-        // Extract title & timeLimit from first data row if metadata columns exist
-        let examTitle = 'Imported Exam';
-        let examTimeLimit = 60;
-        if (titleIdx !== -1 && dataRows[0] && dataRows[0][titleIdx]) { examTitle = String(dataRows[0][titleIdx]).trim() || examTitle; }
-        if (tlIdx !== -1 && dataRows[0] && dataRows[0][tlIdx]) { examTimeLimit = parseInt(dataRows[0][tlIdx]) || examTimeLimit; }
-
-        // Build sections map
-        const sectionsMap = {};
-        let defaultSection = 'Section 1';
-
-        for (const row of dataRows) {
-            const section = sectionIdx !== -1 ? String(row[sectionIdx] || '').trim() : defaultSection;
-            const sectionName = section || defaultSection;
-            const type = typeIdx !== -1 ? norm(row[typeIdx]) : 'mcq';
-            const questionText = qIdx !== -1 ? String(row[qIdx] || '').trim() : String(row[0] || '').trim();
-            if (!questionText) continue;
-
-            const correctRaw = corrIdx !== -1 ? String(row[corrIdx] || '').trim().toUpperCase() : '';
-            const points = ptsIdx !== -1 ? parseFloat(row[ptsIdx]) || 1 : 1;
-
-            let qType = 'mcq';
-            let options = [];
-            let correctAnswer = correctRaw;
-
-            if (type.includes('true') || type.includes('tf') || type.includes('t/f')) {
-                qType = 'true_false';
-                correctAnswer = correctRaw.startsWith('T') ? 'True' : 'False';
-            } else if (type.includes('open') || type.includes('essay') || type.includes('short')) {
-                qType = 'open';
-                correctAnswer = '';
-            } else {
-                // MCQ - build options from columns
-                const optCols = [
-                    { label: 'A', idx: aIdx },
-                    { label: 'B', idx: bIdx },
-                    { label: 'C', idx: cIdx },
-                    { label: 'D', idx: dIdx }
-                ];
-                for (const { label, idx } of optCols) {
-                    const text = idx !== -1 ? String(row[idx] || '').trim() : '';
-                    if (text) options.push({ label, text });
-                }
-                // If no options found but correct answer set, mark as open
-                if (options.length === 0) { qType = 'open'; correctAnswer = ''; }
-            }
-
-            if (!sectionsMap[sectionName]) sectionsMap[sectionName] = [];
-            sectionsMap[sectionName].push({ type: qType, questionText, options, correctAnswer, points });
-        }
-
-        const sectionsData = Object.entries(sectionsMap).map(([name, questions]) => ({ name, questions }));
-        if (sectionsData.length === 0 || sectionsData.every(s => s.questions.length === 0)) {
-            return res.status(400).json({ message: 'No valid questions found in file. Check format.' });
-        }
-
-        // ---- Create exam in DB (reuse same logic as POST /) ----
         const Classroom = require('../models/Classroom');
         const klass = await Classroom.findOne({ _id: classId, facultyId });
         if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
 
-        const exam = await Exam.create({ title: examTitle, timeLimit: examTimeLimit, classId, subjectId: subjectId || null, facultyId, active: false });
+        const exam = await Exam.create({
+            title: examTitle,
+            timeLimit: examTimeLimit,
+            classId,
+            subjectId: subjectId || null,
+            facultyId,
+            createdBy: req.user.id,
+            active: false,
+            examCodes: []
+        });
 
-        for (const sData of sectionsData) {
-            const section = await Section.create({ examId: exam._id, name: sData.name });
-            for (const q of sData.questions) {
-                await Question.create({ sectionId: section._id, examId: exam._id, type: q.type, questionText: q.questionText, options: q.options, correctAnswer: q.correctAnswer, points: q.points });
+        for (let i = 0; i < sectionsData.length; i++) {
+            const sData = sectionsData[i];
+            const section = await Section.create({ examId: exam._id, name: sData.name, order: i + 1 });
+            exam.sections.push(section._id);
+
+            for (let j = 0; j < sData.questions.length; j++) {
+                const q = sData.questions[j];
+                await Question.create({
+                    sectionId: section._id,
+                    examId: exam._id,
+                    type: q.type,
+                    questionText: q.questionText,
+                    options: q.options,
+                    correctAnswer: q.type === 'open-ended' ? '' : q.correctAnswer,
+                    points: q.points,
+                    order: j + 1
+                });
             }
         }
 
-        res.status(201).json({ message: 'Exam imported successfully.', exam: { _id: exam._id, title: examTitle } });
+        await exam.save();
+
+        const questionCount = sectionsData.reduce((sum, section) => sum + section.questions.length, 0);
+        res.status(201).json({
+            message: 'Exam imported successfully.',
+            importedCount: questionCount,
+            exam: { _id: exam._id, title: examTitle, sections: sectionsData.length, questions: questionCount }
+        });
     } catch (error) {
         console.error('Exam file import error:', error);
+        if (error instanceof ImportFormatError || error.status === 400) {
+            return res.status(error.status || 400).json({ message: error.message });
+        }
         res.status(500).json({ message: 'Error processing exam file: ' + error.message });
     }
 });
 
-// POST /api/exams — Create exam (admin or teacher)
+// POST /api/exams - Create exam (admin or teacher)
 router.post('/', verifyToken, requireAdminOrTeacher, async (req, res) => {
 
     try {

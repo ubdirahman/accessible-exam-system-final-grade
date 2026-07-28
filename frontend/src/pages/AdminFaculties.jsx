@@ -1,10 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../api/axios';
 import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
 const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
 
 const INITIAL_FORM = {
@@ -51,7 +50,6 @@ export default function AdminFaculties() {
         setTouched({});
     };
 
-    // Validate required fields
     const requiredFields = ['name', 'code', 'adminName', 'adminEmail'];
     const isFieldEmpty = (field) => !form[field]?.trim();
     const hasErrors = requiredFields.some(isFieldEmpty) || (!editingId && !form.adminPassword?.trim());
@@ -110,13 +108,12 @@ export default function AdminFaculties() {
         });
         if (!confirmed) return;
 
-        // Optimistic update
         setFaculties(prev => prev.filter(f => f._id !== id));
         try {
             await api.delete(`/faculties/${id}`);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to delete faculty.');
-            await loadFaculties(); // Restore on error
+            await loadFaculties();
         }
     };
 
@@ -126,11 +123,15 @@ export default function AdminFaculties() {
         faculty.name,
         faculty.code,
         faculty.admin?.name,
-        faculty.admin?.email
+        faculty.admin?.email,
+        faculty.active === false ? 'inactive' : 'active'
     ));
+    const activeFaculties = faculties.filter((faculty) => faculty.active !== false).length;
+    const inactiveFaculties = faculties.length - activeFaculties;
+    const facultyAdmins = faculties.filter((faculty) => faculty.admin).length;
 
     return (
-        <div className="fade-in">
+        <div className="fade-in faculties-page">
             {confirmDialog}
             <div className="flex items-center justify-between mb-md">
                 <div>
@@ -154,6 +155,25 @@ export default function AdminFaculties() {
                         <><i className="fa-solid fa-plus" /> Add Faculty</>
                     )}
                 </button>
+            </div>
+
+            <div className="stats-grid faculty-stats">
+                <div className="stat-card">
+                    <div className="stat-value">{faculties.length}</div>
+                    <div className="stat-label">Total Faculties</div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-value">{activeFaculties}</div>
+                    <div className="stat-label">Active Faculties</div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-value">{facultyAdmins}</div>
+                    <div className="stat-label">Faculty Admins</div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-value">{inactiveFaculties}</div>
+                    <div className="stat-label">Inactive Faculties</div>
+                </div>
             </div>
 
             {showForm && (
@@ -232,12 +252,21 @@ export default function AdminFaculties() {
                 </div>
             )}
 
-            <div className="card">
-                <div className="flex items-center justify-between mb-sm">
-                    <h3>Existing Faculties</h3>
-                    <button className="btn btn-ghost btn-sm" onClick={loadFaculties}>Refresh</button>
+            <div className="card data-card faculties-table-card">
+                <div className="flex items-center justify-between mb-md table-card-header">
+                    <h3><i className="fa-solid fa-list" aria-hidden="true"></i> Existing Faculties</h3>
+                    <div className="flex gap-sm">
+                        <button className="btn btn-secondary btn-sm" onClick={loadFaculties}>
+                            <i className="fa-solid fa-rotate-right" aria-hidden="true"></i> Refresh
+                        </button>
+                        <button className="btn btn-secondary btn-sm" type="button">
+                            <i className="fa-solid fa-filter" aria-hidden="true"></i> Filters
+                            <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                        </button>
+                    </div>
                 </div>
-                <div className="mb-sm">
+                <div className="faculty-search-block mb-md">
+                    <label>Search Faculties</label>
                     <SearchInput
                         value={searchTerm}
                         onChange={setSearchTerm}
@@ -256,32 +285,57 @@ export default function AdminFaculties() {
                         <table>
                             <thead>
                                 <tr>
+                                    <th>#</th>
                                     <th>Name</th>
                                     <th>Code</th>
                                     <th>Admin</th>
                                     <th>Email</th>
+                                    <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredFaculties.map((faculty) => (
-                                    <tr key={faculty._id}>
-                                        <td style={{ fontWeight: 600 }}>{faculty.name}</td>
-                                        <td>{faculty.code}</td>
-                                        <td>{faculty.admin?.name || 'No admin assigned'}</td>
-                                        <td>{faculty.admin?.email || '-'}</td>
-                                        <td>
-                                            <div className="flex gap-sm">
-                                                <button className="btn btn-sm btn-secondary" onClick={() => startEdit(faculty)}>Edit</button>
-                                                <button className="btn btn-sm btn-danger" onClick={() => deleteFaculty(faculty._id, faculty.name)}>
-                                                    <i className="fa-solid fa-trash" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {filteredFaculties.map((faculty, index) => {
+                                    const isActive = faculty.active !== false;
+                                    return (
+                                        <tr key={faculty._id}>
+                                            <td><span className="row-index">{index + 1}</span></td>
+                                            <td style={{ fontWeight: 700 }}>
+                                                <span className="faculty-name-cell">
+                                                    <span className="row-avatar" aria-hidden="true">
+                                                        <i className="fa-solid fa-building-columns" />
+                                                    </span>
+                                                    {faculty.name}
+                                                </span>
+                                            </td>
+                                            <td>{faculty.code}</td>
+                                            <td>{faculty.admin?.name || 'No admin assigned'}</td>
+                                            <td>{faculty.admin?.email || '-'}</td>
+                                            <td>
+                                                <span className={`badge ${isActive ? 'badge-success' : 'badge-danger'}`}>
+                                                    {isActive ? 'Active' : 'Inactive'}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div className="flex gap-sm">
+                                                    <button className="btn btn-sm btn-secondary" onClick={() => startEdit(faculty)}>
+                                                        <i className="fa-solid fa-pen" aria-hidden="true"></i> Edit
+                                                    </button>
+                                                    <button className="btn btn-sm btn-danger" onClick={() => deleteFaculty(faculty._id, faculty.name)}>
+                                                        <i className="fa-solid fa-trash" />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
+                    </div>
+                )}
+                {!loading && filteredFaculties.length > 0 && (
+                    <div className="table-footer-line">
+                        Showing 1 to {filteredFaculties.length} of {filteredFaculties.length} results
                     </div>
                 )}
             </div>
