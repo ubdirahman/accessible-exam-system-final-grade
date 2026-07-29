@@ -69,13 +69,23 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         if (allowFastOptionMatch && commands['option']) {
             const words = text.toLowerCase().split(/\s+/);
-            const aPatterns = /^(a|hey|ay|eight|8|eh|ate|eye)$/i;
-            const bPatterns = /^(b|be|bee|beat|busy)$/i;
-            const cPatterns = /^(c|see|sea|she|si|say)$/i;
-            const dPatterns = /^(d|dee|the|day|do|d\.)$/i;
+            const aPatterns = /^(a|hey|ay|eight|8|eh|ate|eye|alpha|alif)$/i;
+            const bPatterns = /^(b|be|bee|beat|busy|bravo|baa)$/i;
+            const cPatterns = /^(c|see|sea|she|si|say|charlie|ceel)$/i;
+            const dPatterns = /^(d|dee|the|day|do|d\.|delta|dowlad)$/i;
+
+            const truePatterns = /\b(true|truth|tru|correct|right|is true|it is true|statement is true)\b/i;
+            const falsePatterns = /\b(false|fals|falls|fault|incorrect|wrong|fake|not true|is false|it is false|statement is false)\b/i;
 
             let letter = null;
-            if (words.length === 1) {
+
+            if (truePatterns.test(text)) {
+                letter = 'A';
+            } else if (falsePatterns.test(text)) {
+                letter = 'B';
+            }
+
+            if (!letter && words.length === 1) {
                 const word = words[0];
                 if (aPatterns.test(word)) letter = 'A';
                 else if (bPatterns.test(word)) letter = 'B';
@@ -84,15 +94,31 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
             }
 
             if (!letter) {
-                const optionMatchFast = text.match(/\b([a-d])\b/);
+                const prefixMatch = text.match(/^(?:option|choice|letter|select)\s+([a-d])$/i);
+                if (prefixMatch) {
+                    letter = prefixMatch[1].toUpperCase();
+                }
+            }
+
+            if (!letter) {
+                const optionMatchFast = text.match(/\b([a-d])\b/i);
                 if (optionMatchFast) {
                     letter = optionMatchFast[1].toUpperCase();
                 }
             }
 
             if (letter) {
-                setLastCommand(`Option ${letter}`);
-                commands['option'](letter);
+                const handled = commands['option'](letter);
+                if (handled !== false) {
+                    setLastCommand(`Option ${letter}`);
+                    return true;
+                }
+            }
+
+            // Fallback: Pass spoken text to commands['option'] to match option answer content
+            const handledByText = commands['option'](text);
+            if (handledByText) {
+                setLastCommand(`Option: ${text}`);
                 return true;
             }
         }

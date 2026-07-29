@@ -14,6 +14,7 @@ import {
     spellStudentId
 } from '../utils/studentIdSpeech';
 import { somaliTtsOptions } from '../utils/somaliSpeech';
+import { playSomaliAudioFile, stopSomaliAudio, AUDIO_PROMPTS } from '../utils/audioPlayer';
 
 const LAST_STUDENT_ID_KEY = 'last_student_id';
 const STUDENT_ID_RECOGNITION_OPTIONS = {
@@ -103,6 +104,8 @@ export default function LoginPage() {
     const speakAndListen = useCallback((text, options = {}) => {
         const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
         pauseListening();
+        stop();
+        stopSomaliAudio();
         setAudioPlayingState(true);
 
         // Helper: resume listening after a short delay to prevent mic picking up audio tail
@@ -113,6 +116,22 @@ export default function LoginPage() {
                 }
             }, 300);
         };
+
+        // Check if prompt is asking to read/enter student ID -> play native Somali pre-recorded audio!
+        const isPleaseEnterId = typeof text === 'string' && (
+            text.includes('Fadlan akhri nambarkaaga') ||
+            text.includes('Fadlan geli ID-gaaga') ||
+            text.includes('mar kale akhri')
+        );
+
+        if (isPleaseEnterId) {
+            playSomaliAudioFile(AUDIO_PROMPTS.PLEASE_ENTER_ID, () => {
+                setAudioPlayingState(false);
+                if (options.onEnd) options.onEnd();
+                safeResume();
+            });
+            return;
+        }
 
         speak(text, somaliTtsOptions({
             ...options,
@@ -122,15 +141,15 @@ export default function LoginPage() {
                 safeResume();
             }
         }));
-    }, [mode, speak, setAudioPlayingState]);
+    }, [mode, speak, stop, setAudioPlayingState]);
 
     const playConfirmationSequence = useCallback((cleanId) => {
         const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
         pauseListening();
         stop();
+        stopSomaliAudio();
         setAudioPlayingState(true);
 
-        // Helper: resume listening after a short delay to prevent mic picking up audio tail
         const safeResume = () => {
             setTimeout(() => {
                 if (mode === 'student') {
@@ -139,17 +158,35 @@ export default function LoginPage() {
             }, 300);
         };
 
-        speak([
-            'Ma hubtaa in nambarkaaga ardaygu yahay:',
-            { text: spellStudentId(cleanId), options: ENGLISH_ID_TTS_OPTIONS },
-            'Haddii uu sax yahay, dheh haa. Haddii uu khaldan yahay, dheh maya.'
-        ], somaliTtsOptions({
-            onEnd: () => {
-                setAudioPlayingState(false);
-                safeResume();
-            }
-        }));
+        // Step 1: Native Somali voice "Ma hubtaa in ID-gaagu yahay..."
+        playSomaliAudioFile(AUDIO_PROMPTS.ARE_YOU_SURE_ID, () => {
+            // Step 2: Spell out student ID characters slowly and distinctly
+            speak(spellStudentId(cleanId), {
+                ...ENGLISH_ID_TTS_OPTIONS,
+                onEnd: () => {
+                    // Step 3: Native Somali voice "Haddii uu sax yahay dheh haa..."
+                    playSomaliAudioFile(AUDIO_PROMPTS.YES_NO_CONFIRM, () => {
+                        setAudioPlayingState(false);
+                        safeResume();
+                    });
+                }
+            });
+        });
     }, [mode, speak, stop, setAudioPlayingState]);
+
+    const replayCurrentVoicePrompt = useCallback(() => {
+        stop();
+        stopSomaliAudio();
+        const current = sanitizeStudentId(studentIdRef.current);
+        if (voiceStep === 'CONFIRM_ID' && current) {
+            playConfirmationSequence(current);
+        } else if (current) {
+            speakAndListen(spellStudentId(current), ENGLISH_ID_TTS_OPTIONS);
+        } else {
+            speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+        }
+        focusStudentInput();
+    }, [focusStudentInput, playConfirmationSequence, speakAndListen, stop, voiceStep]);
 
     const startGuidedEntry = useCallback((resetCurrent = false) => {
         const existingId = resetCurrent ? '' : sanitizeStudentId(studentIdRef.current);
@@ -549,25 +586,38 @@ export default function LoginPage() {
 
         if (voiceStep === 'CONFIRM_ID') {
             const handleConfirmYes = () => {
+                stop();
+                stopSomaliAudio();
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                const targetId = sanitizeStudentId(studentIdRef.current || studentId);
                 if (idConfirmationMode === 'save') {
-                    saveStudentIdOnly(studentIdRef.current);
+                    saveStudentIdOnly(targetId);
                     return;
                 }
-                performStudentLogin(studentIdRef.current);
+                performStudentLogin(targetId);
             };
 
             const handleConfirmNo = () => {
-                setVoiceStep('LISTENING_ID');
-                setIdConfirmationMode('login');
+                stop();
+                stopSomaliAudio();
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
                 setStudentId('');
+                studentIdRef.current = '';
+                setSilenceConfirmedId('');
+                setError('');
+                setIdConfirmationMode('login');
+                setVoiceStep('LISTENING_ID');
                 markStudentIdActivity();
                 speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+                focusStudentInput();
             };
 
             return {
                 ...baseCommands,
                 'yes': handleConfirmYes,
                 'haa': handleConfirmYes,
+                'haye': handleConfirmYes,
+                'diyaar': handleConfirmYes,
                 'no': handleConfirmNo,
                 'maya': handleConfirmNo,
                 'try': () => promptStudentIdConfirmation(studentIdRef.current),
@@ -646,6 +696,7 @@ export default function LoginPage() {
     useEffect(() => {
         const cleanupAudioAndVoice = () => {
             stop(); // Stop any ongoing TTS
+            stopSomaliAudio(); // Stop any ongoing native audio playback
             if (interimIdTimeoutRef.current) {
                 clearTimeout(interimIdTimeoutRef.current);
             }

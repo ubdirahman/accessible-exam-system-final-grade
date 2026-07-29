@@ -6,6 +6,7 @@ import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import api from '../api/axios';
 import useConfirmDialog from '../hooks/useConfirmDialog';
+import { playSomaliAudioFile, stopSomaliAudio, AUDIO_PROMPTS } from '../utils/audioPlayer';
 import {
     SOMALI_LOGOUT_CONFIRMATION_PROMPT,
     SOMALI_RECOGNITION_OPTIONS,
@@ -140,20 +141,80 @@ export default function StudentDashboard() {
     }), [completedExams, currentExam, examData, latestCompletedExam, queueData, remainingAfterCurrent, user?.name]);
 
     const speakDashboardSummary = useCallback((includeStartPrompt = true) => {
-        const text = buildDashboardSpeech(includeStartPrompt);
-        if (!text) return;
+        const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
+        pauseListening();
+        stopSomaliAudio();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
 
-        speakSomali(text, { lang: 'so-SO', rate: 1.0 });
+        if (resumeListeningTimeoutRef.current) clearTimeout(resumeListeningTimeoutRef.current);
+
         setWaitingRepeat(false);
 
-        if (currentExam && includeStartPrompt) {
-            setWaitingStart(true);
-            setConfirmStartPending(true);
-        } else {
-            setWaitingStart(false);
-            setConfirmStartPending(false);
-        }
-    }, [buildDashboardSpeech, currentExam, speakSomali]);
+        // 1. Play sodhawow.mp4 audio prompt
+        playSomaliAudioFile(AUDIO_PROMPTS.WELCOME, () => {
+            if (!dashboardActiveRef.current) return;
+
+            // Wait 400ms for a calm pause before speaking Student Name
+            setTimeout(() => {
+                if (!dashboardActiveRef.current) return;
+
+                // 2. Speak Student Name (Male AI Voice)
+                const studentNameText = user?.name ? String(user.name).trim() : 'arday';
+                speak(studentNameText, {
+                    lang: 'so-SO',
+                    rate: 0.85,
+                    pitch: 0.80,
+                    onEnd: () => {
+                        if (!dashboardActiveRef.current) return;
+
+                        // Wait 400ms for a calm pause before speaking Exam details in English
+                        setTimeout(() => {
+                            if (!dashboardActiveRef.current) return;
+
+                            // 3. Speak Exam Name & Time Limit (Duration) in ENGLISH (Male AI Voice)
+                            const examTitle = currentExam?.subjectName || currentExam?.title || 'Exam';
+                            const timeLimit = currentExam?.timeLimit || examData?.exam?.timeLimit || examData?.timeLimit || 0;
+                            const englishDetails = currentExam
+                                ? `Exam name: ${examTitle}. Duration: ${timeLimit > 0 ? `${timeLimit} minutes` : 'No time limit'}.`
+                                : 'No active exam available.';
+
+                            speak(englishDetails, {
+                                lang: 'en-US',
+                                rate: 0.88,
+                                pitch: 0.80,
+                                onEnd: () => {
+                                    if (!dashboardActiveRef.current) return;
+
+                                    if (currentExam && includeStartPrompt) {
+                                        // Wait 400ms for a calm pause before prompt audio
+                                        setTimeout(() => {
+                                            if (!dashboardActiveRef.current) return;
+
+                                            // 4. Play audio prompt: "waxan rabaa inaa kubiilaabo examka..."
+                                            playSomaliAudioFile(AUDIO_PROMPTS.START_EXAM_QUESTION, () => {
+                                                if (!dashboardActiveRef.current) return;
+                                                setWaitingStart(true);
+                                                setConfirmStartPending(true);
+                                                resumeListeningTimeoutRef.current = setTimeout(() => {
+                                                    if (dashboardActiveRef.current) resumeListening();
+                                                }, 450);
+                                            });
+                                        }, 400);
+                                    } else {
+                                        setWaitingStart(false);
+                                        setConfirmStartPending(false);
+                                        resumeListeningTimeoutRef.current = setTimeout(() => {
+                                            if (dashboardActiveRef.current) resumeListening();
+                                        }, 450);
+                                    }
+                                }
+                            });
+                        }, 400);
+                    }
+                });
+            }, 400);
+        });
+    }, [currentExam, examData, speak, user?.name]);
 
     const speakCompletedSubjects = useCallback(() => {
         if (!completedExams.length) {
@@ -187,7 +248,8 @@ export default function StudentDashboard() {
         speakDashboardSummary(true);
     }, [currentExam, speakDashboardSummary, speakSomali]);
 
-    async function startExamNow() {
+    const startExamNow = useCallback(async () => {
+        stopSomaliAudio();
         if (!currentExam?.id) {
             speakSomali('Ma jiro imtixaan diyaar ah oo aad hadda bilaabi karto.', { lang: 'so-SO' });
             return;
@@ -216,15 +278,16 @@ export default function StudentDashboard() {
 
             speakSomali(msg, { lang: 'so-SO', rate: 1.0 });
         }
-    }
+    }, [currentExam, ensureExamRecording, user?.studentId, user?.name, startExam, navigate, loadDashboardData, speakSomali]);
 
     const handleAffirmative = useCallback(() => {
+        stopSomaliAudio();
         if (confirmLogoutPending) {
             triggerConfirm();
             return;
         }
 
-        if (waitingStart && confirmStartPending) {
+        if ((waitingStart && confirmStartPending) || currentExam) {
             setWaitingStart(false);
             setConfirmStartPending(false);
             startExamNow();
@@ -235,21 +298,22 @@ export default function StudentDashboard() {
             setWaitingRepeat(false);
             speakDashboardSummary(!!currentExam);
         }
-    }, [confirmLogoutPending, triggerConfirm, confirmStartPending, currentExam, speakDashboardSummary, waitingRepeat, waitingStart]);
+    }, [confirmLogoutPending, triggerConfirm, waitingStart, confirmStartPending, currentExam, startExamNow, waitingRepeat, speakDashboardSummary]);
 
     const handleNegative = useCallback(() => {
+        stopSomaliAudio();
         if (confirmLogoutPending) {
             triggerCancel();
             return;
         }
 
-        if (waitingStart || waitingRepeat) {
+        if (waitingStart || waitingRepeat || confirmStartPending || currentExam) {
             setWaitingStart(false);
             setConfirmStartPending(false);
             setWaitingRepeat(false);
             speakDashboardSummary(!!currentExam);
         }
-    }, [confirmLogoutPending, currentExam, speakDashboardSummary, triggerCancel, waitingRepeat, waitingStart]);
+    }, [confirmLogoutPending, triggerCancel, waitingStart, waitingRepeat, confirmStartPending, currentExam, speakDashboardSummary]);
 
     const repeatActivePrompt = useCallback(() => {
         if (confirmLogoutPending) {
@@ -383,6 +447,7 @@ export default function StudentDashboard() {
 
         return () => {
             dashboardActiveRef.current = false;
+            stopSomaliAudio();
             if (resumeListeningTimeoutRef.current) clearTimeout(resumeListeningTimeoutRef.current);
         };
     }, []);

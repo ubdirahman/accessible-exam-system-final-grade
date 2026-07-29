@@ -355,7 +355,7 @@ export function spellStudentId(value = '') {
         .split('')
         .map((char, index) => {
             if (/\d/.test(char)) return ENGLISH_DIGIT_NAMES[char] || char;
-            return index === 0 ? `letter ${char}` : char;
+            return index === 0 ? `Letter ${char}` : char;
         })
-        .join(', ');
+        .join(' . . ');
 }

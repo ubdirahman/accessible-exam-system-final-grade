@@ -44,8 +44,18 @@ function getCurrentAnswerSummary(question, answer) {
     return `Option ${selectedOption.label}: ${selectedOption.text}`;
 }
 
+function buildOptionsSpeech(question) {
+    if (!question || !question.options?.length) return ['There are no option choices for this question.'];
+
+    const parts = ['Answer choices:'];
+    question.options.forEach((option) => {
+        parts.push(`Option ${option.label}: ${option.text}.`);
+    });
+    return parts;
+}
+
 function buildQuestionSpeech(question, index, total, sectionName, currentAnswer) {
-    if (!question) return '';
+    if (!question) return [];
 
     const parts = [
         sectionName ? `Section ${sectionName}.` : '',
@@ -56,15 +66,15 @@ function buildQuestionSpeech(question, index, total, sectionName, currentAnswer)
     ];
 
     if (question.options?.length) {
-        parts.push('Answer choices.');
+        parts.push('Answer choices:');
         question.options.forEach((option) => {
-            parts.push(`Option ${option.label}, ${option.text}.`);
+            parts.push(`Option ${option.label}: ${option.text}.`);
         });
     }
 
     if (currentAnswer) {
         if (question.type === 'open-ended') {
-            parts.push('You already have a saved draft answer for this question.');
+            parts.push('You already have a saved answer for this question.');
         } else {
             parts.push(`Your current answer is ${getCurrentAnswerSummary(question, currentAnswer)}.`);
         }
@@ -73,9 +83,9 @@ function buildQuestionSpeech(question, index, total, sectionName, currentAnswer)
     if (question.type === 'open-ended') {
         parts.push('You may type or dictate your answer. Say save answer when you are ready.');
     } else if (question.type === 'true-false') {
-        parts.push('Say A or B, then say yes to confirm.');
+        parts.push('Say A or B, or speak the answer text such as True or False, then say yes to confirm.');
     } else {
-        parts.push('Say A, B, C, or D, then say yes to confirm.');
+        parts.push('Say A, B, C, or D, or speak the answer text directly, then say yes to confirm.');
     }
 
     return parts.filter(Boolean);
@@ -385,33 +395,129 @@ export default function ExamPage() {
         }
     }, [announce, finishExam, hasUnsavedOpenEndedDraft, navigate, persistCurrentDraft, requestOpenEndedSaveConfirmation, waitingAnswerConfirm]);
 
-    const selectOption = useCallback((letter) => {
-        if (!currentQuestion || currentQuestion.type === 'open-ended') return;
+    const isSlowSpeed = rate < 0.9;
 
+    const toggleSpeechSpeed = useCallback(() => {
+        const newRate = isSlowSpeed ? 1.0 : 0.75;
+        setRate(newRate);
+        const label = newRate < 0.9 ? 'Speech speed set to slow, 0.75.' : 'Speech speed set to normal, 1.0.';
+        announce(label, { speakMessage: true, assertive: true });
+    }, [announce, isSlowSpeed, setRate]);
+
+    const setSpeedSlower = useCallback(() => {
+        setRate(0.75);
+        announce('Speech speed slowed down to 0.75.', { speakMessage: true, assertive: true });
+    }, [announce, setRate]);
+
+    const setSpeedNormal = useCallback(() => {
+        setRate(1.0);
+        announce('Speech speed set to normal 1.0.', { speakMessage: true, assertive: true });
+    }, [announce, setRate]);
+
+    const findOptionByInput = useCallback((input) => {
+        if (!currentQuestion || !currentQuestion.options?.length) return null;
+
+        const cleanInput = String(input || '').trim().toLowerCase();
+        if (!cleanInput) return null;
+
+        // 0. True / False specific matching
+        const isTrueFalseQuestion = currentQuestion.type === 'true-false' ||
+            (currentQuestion.options.length === 2 && currentQuestion.options[0]?.text?.toLowerCase() === 'true');
+
+        if (isTrueFalseQuestion) {
+            if (/\b(true|truth|tru|correct|right|yes it is|is true|it is true|statement is true)\b/i.test(cleanInput)) {
+                return currentQuestion.options.find(opt => opt.label === 'A') || currentQuestion.options[0];
+            }
+            if (/\b(false|fals|falls|fault|incorrect|wrong|fake|not true|is false|it is false|statement is false)\b/i.test(cleanInput)) {
+                return currentQuestion.options.find(opt => opt.label === 'B') || currentQuestion.options[1];
+            }
+        }
+
+        // 1. Direct letter match (A, B, C, D)
+        if (/^[a-d]$/i.test(cleanInput)) {
+            const letter = cleanInput.toUpperCase();
+            return currentQuestion.options.find(opt => opt.label === letter) || null;
+        }
+
+        // 2. Exact match on option text or label
+        const exactMatch = currentQuestion.options.find(opt =>
+            opt.label.toLowerCase() === cleanInput ||
+            opt.text.toLowerCase() === cleanInput
+        );
+        if (exactMatch) return exactMatch;
+
+        // 3. Match 'option A', 'choice A', 'letter A'
+        const optionPrefixMatch = cleanInput.match(/^(?:option|choice|letter|select)\s+([a-d])$/i);
+        if (optionPrefixMatch) {
+            const letter = optionPrefixMatch[1].toUpperCase();
+            return currentQuestion.options.find(opt => opt.label === letter) || null;
+        }
+
+        // 4. Substring/fuzzy match on option text
+        const substringMatch = currentQuestion.options.find(opt => {
+            const textLower = opt.text.toLowerCase();
+            return cleanInput.length >= 2 && (textLower.includes(cleanInput) || cleanInput.includes(textLower));
+        });
+        if (substringMatch) return substringMatch;
+
+        return null;
+    }, [currentQuestion]);
+
+    const selectOption = useCallback((letterOrInput) => {
+        if (!currentQuestion || currentQuestion.type === 'open-ended') return false;
+
+        const option = findOptionByInput(letterOrInput);
+        if (!option) {
+            if (/^[a-d]$/i.test(String(letterOrInput || '').trim())) {
+                announce(`Option ${String(letterOrInput).toUpperCase()} is not available. Please choose a valid option.`, {
+                    speakMessage: true,
+                    assertive: true
+                });
+            }
+            return false;
+        }
+
+        const letter = option.label;
         if (currentQuestion.type === 'true-false' && letter !== 'A' && letter !== 'B') {
-            announce('Invalid option. Choose A or B.', {
+            announce('Invalid choice for True or False. Choose Option A or Option B.', {
                 speakMessage: true,
                 assertive: true
             });
-            return;
+            return false;
         }
-
-        const option = getSelectedOption(currentQuestion, letter);
-        const optionDescription = option ? `: ${option.text}` : '';
 
         stopTTS();
         setPendingAnswer(letter);
         setShowConfirm(true);
         setWaitingNextConfirm(false);
 
-        announce(`Option ${letter}${optionDescription}. Are you sure?`, {
+        announce(`You selected Option ${letter}: ${option.text}. Are you sure you want to select Option ${letter}: ${option.text}? Say YES to confirm, or NO to cancel.`, {
             speakMessage: true,
             assertive: true
         });
-    }, [announce, currentQuestion, stopTTS]);
+        return true;
+    }, [announce, currentQuestion, findOptionByInput, stopTTS]);
+
+    const readCurrentOptions = useCallback(() => {
+        if (!currentQuestion) return;
+
+        if (!currentQuestion.options?.length) {
+            announce('This question has no multiple choice options.', { speakMessage: true, assertive: true });
+            return;
+        }
+
+        stopTTS();
+        const optionsSpeech = buildOptionsSpeech(currentQuestion);
+        optionsSpeech.push('Say the option letter or speak the answer text to select your choice.');
+        speak(optionsSpeech);
+        announce(`Reading options for Question ${currentIndex + 1}.`, { toast: true, assertive: false });
+    }, [announce, currentIndex, currentQuestion, speak, stopTTS]);
 
     const confirmAnswer = useCallback(async () => {
         if (!pendingAnswer || !currentQuestion) return;
+
+        const selectedOption = getSelectedOption(currentQuestion, pendingAnswer);
+        const optionText = selectedOption ? `: ${selectedOption.text}` : '';
 
         setAnswer(currentQuestion.id, pendingAnswer);
         await saveAnswer(currentQuestion.id, pendingAnswer);
@@ -420,7 +526,7 @@ export default function ExamPage() {
         setWaitingNextConfirm(true);
 
         stopTTS();
-        announce(`Saved. Next question?`, {
+        announce(`Saved Option ${pendingAnswer}${optionText}. Say YES to move to the next question, or NO to stay on this question.`, {
             speakMessage: true,
             assertive: true
         });
@@ -429,7 +535,7 @@ export default function ExamPage() {
     const cancelAnswer = useCallback(() => {
         setPendingAnswer(null);
         setShowConfirm(false);
-        announce('Cancelled.', { speakMessage: true, assertive: true });
+        announce('Selection cancelled. Please choose your answer by saying the letter or the answer text.', { speakMessage: true, assertive: true });
     }, [announce]);
 
     const handleOpenEndedChange = useCallback((event) => {
@@ -629,11 +735,19 @@ export default function ExamPage() {
         repeat: () => readCurrentQuestion(),
         'repeat question': () => readCurrentQuestion(),
         'repeat question again': () => readCurrentQuestion(),
-        'ku celi': () => readCurrentQuestion(),
-        'soo celi': () => readCurrentQuestion(),
+        'repeat options': () => readCurrentOptions(),
+        'options': () => readCurrentOptions(),
+        'read options': () => readCurrentOptions(),
+        'repeat choices': () => readCurrentOptions(),
+        'choices': () => readCurrentOptions(),
+        'slower': () => setSpeedSlower(),
+        'slow down': () => setSpeedSlower(),
+        'read slower': () => setSpeedSlower(),
+        'faster': () => setSpeedNormal(),
+        'speed up': () => setSpeedNormal(),
+        'normal speed': () => setSpeedNormal(),
         help: () => readAccessibilityHelp(),
         'help me': () => readAccessibilityHelp(),
-        caawi: () => readAccessibilityHelp(),
         'question help': () => requestHelp('Please explain this question in simpler words.'),
         'ai explanation': () => requestHelp('Please explain this question in simpler words.'),
         'ai help': () => requestHelp('Please explain this question in simpler words.'),
@@ -648,18 +762,11 @@ export default function ExamPage() {
             announce('Speech stopped.', { toast: true, assertive: true });
         },
         finish: () => openFinishDialog(),
-        dhammee: () => openFinishDialog(),
-        option: (letter) => selectOption(letter),
+        option: (letterOrInput) => selectOption(letterOrInput),
         'save answer': () => handleOpenEndedSubmit(),
-        xaree: () => handleOpenEndedSubmit(),
-        keydi: () => handleOpenEndedSubmit(),
         'clear answer': () => clearOpenEndedAnswer(),
-        'tir tir': () => clearOpenEndedAnswer(),
-        'tir-tir': () => clearOpenEndedAnswer(),
         yes: handleYes,
-        haa: handleYes,
         no: handleNo,
-        maya: handleNo,
         cancel: () => {
             if (showConfirm && pendingAnswer) {
                 cancelAnswer();
@@ -949,6 +1056,18 @@ export default function ExamPage() {
                 return;
             }
 
+            if (key === 'o') {
+                event.preventDefault();
+                readCurrentOptions();
+                return;
+            }
+
+            if (key === 's') {
+                event.preventDefault();
+                toggleSpeechSpeed();
+                return;
+            }
+
             const isOptionKey = key === 'a' || key === 'b' ||
                 ((key === 'c' || key === 'd') && currentQuestion?.type !== 'true-false');
             if (isOptionKey && currentQuestion?.type !== 'open-ended') {
@@ -970,12 +1089,14 @@ export default function ExamPage() {
         moveToNextQuestion,
         moveToPreviousQuestion,
         openFinishDialog,
+        readCurrentOptions,
         readCurrentQuestion,
         selectOption,
         showConfirm,
         showFinishModal,
         stopTTS,
         toggleListening,
+        toggleSpeechSpeed,
         voiceSupported
     ]);
 
@@ -1036,6 +1157,12 @@ export default function ExamPage() {
                         <button type="button" className="btn btn-secondary" onClick={readAccessibilityHelp}>
                             <i className="fa-solid fa-circle-info" aria-hidden="true"></i> Read Help
                         </button>
+                        <button type="button" className="btn btn-secondary" onClick={readCurrentOptions}>
+                            <i className="fa-solid fa-list-ol" aria-hidden="true"></i> Repeat Options
+                        </button>
+                        <button type="button" className="btn btn-secondary" onClick={toggleSpeechSpeed}>
+                            <i className="fa-solid fa-gauge" aria-hidden="true"></i> {isSlowSpeed ? 'Speed: Slow (0.75x)' : 'Speed: Normal (1.0x)'}
+                        </button>
                         <button
                             type="button"
                             className="btn btn-secondary"
@@ -1058,8 +1185,8 @@ export default function ExamPage() {
                     </div>
 
                     <div className="exam-command-list" id="exam-command-help">
-                        <p><strong>Voice:</strong> Next, Previous, Repeat Question, Save Answer, Finish, Review Unanswered, Yes, No.</p>
-                        <p><strong>Keyboard:</strong> Alt + N, Alt + P, Alt + R, Alt + F, Alt + U, Alt + A-D, and Ctrl + Enter inside long answers.</p>
+                        <p><strong>Voice:</strong> Next, Previous, Repeat Question, Repeat Options, Slower, Faster, Save Answer, Finish, Review Unanswered, Yes, No, or speak answer text (e.g., "True", "False").</p>
+                        <p><strong>Keyboard:</strong> Alt + N (Next), Alt + P (Previous), Alt + R (Repeat Question), Alt + O (Repeat Options), Alt + S (Toggle Speed), Alt + F (Finish), Alt + U (Unanswered), Alt + A-D (Select Option).</p>
                         <p><strong>Status:</strong> Last heard command: {lastCommand || 'None yet'}.</p>
                     </div>
                 </section>
@@ -1232,7 +1359,10 @@ export default function ExamPage() {
 
                         <div className="exam-nav-secondary">
                             <button type="button" className="btn btn-secondary" onClick={() => readCurrentQuestion()}>
-                                <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Repeat
+                                <i className="fa-solid fa-volume-high" aria-hidden="true"></i> Repeat Question
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={readCurrentOptions}>
+                                <i className="fa-solid fa-list-ol" aria-hidden="true"></i> Repeat Options
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={jumpToFirstUnanswered} disabled={!unansweredQuestions.length}>
                                 <i className="fa-solid fa-list-check" aria-hidden="true"></i> Unanswered
@@ -1277,19 +1407,30 @@ export default function ExamPage() {
             {showConfirm && (
                 <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-answer-title" aria-describedby="confirm-answer-description">
                     <div className="modal">
-                        <h2 id="confirm-answer-title">Confirm Answer</h2>
-                        <p id="confirm-answer-description">
-                            You selected <strong>{getCurrentAnswerSummary(currentQuestion, pendingAnswer)}</strong>. Do you want to save it?
-                        </p>
+                        <div className="modal-icon-header">
+                            <i className="fa-solid fa-circle-question" aria-hidden="true"></i>
+                            <h2 id="confirm-answer-title">Confirm Your Answer</h2>
+                        </div>
+                        <div className="modal-body-content">
+                            <p id="confirm-answer-description">You selected:</p>
+                            <div className="modal-selected-answer">
+                                <i className="fa-solid fa-check-circle" aria-hidden="true"></i>
+                                {getCurrentAnswerSummary(currentQuestion, pendingAnswer)}
+                            </div>
+                            <p style={{ marginTop: 14 }}>Do you want to save this answer?</p>
+                        </div>
                         <div className="modal-actions">
                             <button type="button" className="btn btn-secondary" onClick={cancelAnswer}>
-                                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> No
+                                <i className="fa-solid fa-xmark" aria-hidden="true"></i> No, Change
                             </button>
                             <button type="button" className="btn btn-primary" onClick={confirmAnswer} ref={confirmYesButtonRef}>
-                                <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Yes
+                                <i className="fa-solid fa-check" aria-hidden="true"></i> Yes, Save
                             </button>
                         </div>
-                        <p className="exam-modal-note">Voice shortcut: say Yes to save or No to change.</p>
+                        <p className="exam-modal-note">
+                            <i className="fa-solid fa-microphone" aria-hidden="true"></i>
+                            Voice shortcut: say <strong>Yes</strong> to save or <strong>No</strong> to change.
+                        </p>
                     </div>
                 </div>
             )}
@@ -1297,27 +1438,36 @@ export default function ExamPage() {
             {showFinishModal && (
                 <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="finish-exam-title" aria-describedby="finish-exam-description">
                     <div className="modal">
-                        <h2 id="finish-exam-title">
-                            <i className="fa-solid fa-flag-checkered" aria-hidden="true"></i> Finish Exam
-                        </h2>
-                        <p id="finish-exam-description">
-                            {unansweredQuestions.length > 0
-                                ? `You still have ${unansweredQuestions.length} unanswered question${unansweredQuestions.length === 1 ? '' : 's'}.`
-                                : 'All questions currently have answers.'}
-                        </p>
-                        <p>Submitting the exam cannot be undone.</p>
+                        <div className="modal-icon-header" style={{ background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 50%, #1e88e5 100%)' }}>
+                            <i className="fa-solid fa-flag-checkered" aria-hidden="true"></i>
+                            <h2 id="finish-exam-title">Finish Exam</h2>
+                        </div>
+                        <div className="modal-body-content">
+                            <p id="finish-exam-description">
+                                {unansweredQuestions.length > 0
+                                    ? `You still have ${unansweredQuestions.length} unanswered question${unansweredQuestions.length === 1 ? '' : 's'}.`
+                                    : 'All questions currently have answers.'}
+                            </p>
+                            <div className="modal-warning-badge">
+                                <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                Submitting the exam cannot be undone.
+                            </div>
+                        </div>
                         <div className="modal-actions">
                             <button type="button" className="btn btn-secondary" onClick={closeFinishDialog} ref={finishContinueButtonRef}>
-                                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Continue Exam
+                                <i className="fa-solid fa-arrow-left" aria-hidden="true"></i> Continue Exam
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={jumpToFirstUnanswered} disabled={!unansweredQuestions.length}>
                                 <i className="fa-solid fa-list-check" aria-hidden="true"></i> Review Unanswered
                             </button>
                             <button type="button" className="btn btn-danger" onClick={handleFinish}>
-                                <i className="fa-solid fa-circle-check" aria-hidden="true"></i> Submit Exam
+                                <i className="fa-solid fa-paper-plane" aria-hidden="true"></i> Submit Exam
                             </button>
                         </div>
-                        <p className="exam-modal-note">Voice shortcut: say &quot;Review Unanswered&quot;, &quot;Submit Exam&quot;, or &quot;No&quot; to continue.</p>
+                        <p className="exam-modal-note">
+                            <i className="fa-solid fa-microphone" aria-hidden="true"></i>
+                            Voice shortcut: say <strong>&quot;Review Unanswered&quot;</strong>, <strong>&quot;Submit Exam&quot;</strong>, or <strong>&quot;No&quot;</strong> to continue.
+                        </p>
                     </div>
                 </div>
             )}
