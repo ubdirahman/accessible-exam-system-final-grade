@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, getDefaultRouteForRole, useAuth } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ExamProvider } from './context/ExamContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminLayout from './components/AdminLayout'; // [NEW]
@@ -25,7 +25,6 @@ import AdminRecordings from './pages/AdminRecordings';
 
 function AppRoutes() {
     const { isAuthenticated, user, loading } = useAuth();
-    const userHomeRoute = getDefaultRouteForRole(user?.role);
 
     // Don't render routes until auth initialization completes;
     // this prevents transient redirect loops when token exists but user hasn't been validated.
@@ -36,15 +35,7 @@ function AppRoutes() {
     return (
         <Routes>
             {/* Public */}
-            <Route path="/" element={
-                isAuthenticated && userHomeRoute
-                    ? (
-                        <Navigate
-                            to={userHomeRoute}
-                            replace
-                        />
-                    ) : <LoginPage />
-            } />
+            <Route path="/" element={<LoginPage />} />
 
             {/* Student routes */}
             <Route path="/student/dashboard" element={
@@ -187,3 +178,6 @@ export default function App() {
         </Router>
     );
 }
+
+
+

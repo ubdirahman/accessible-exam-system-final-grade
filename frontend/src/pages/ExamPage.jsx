@@ -6,9 +6,19 @@ import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import { useTTS } from '../hooks/useTTS';
 import VoiceFeedback from '../components/VoiceFeedback';
 import api from '../api/axios';
+import { stopSomaliAudio } from '../utils/audioPlayer';
 
 const TIME_WARNING_THRESHOLDS = [900, 600, 300, 60, 30];
 const DICTATION_CONFIRM_DELAY = 4000;
+const SPEECH_INPUT_RESUME_DELAY = 650;
+const EXAM_RECOGNITION_OPTIONS = {
+    lang: 'en-US',
+    fallbackLang: 'en-US',
+    continuous: true,
+    interimResults: false,
+    processInterimCommands: false,
+    maxAlternatives: 5
+};
 
 function formatTime(totalSeconds) {
     const safeSeconds = Math.max(totalSeconds, 0);
@@ -150,6 +160,14 @@ export default function ExamPage() {
     const openEndedInputRef = useRef(null);
     const confirmYesButtonRef = useRef(null);
     const finishContinueButtonRef = useRef(null);
+    const listeningControlsRef = useRef({
+        startListening: () => { },
+        stopListening: () => { }
+    });
+    const resumeListeningTimerRef = useRef(null);
+    const speechRunRef = useRef(0);
+    const ttsActiveRef = useRef(false);
+    const voiceInputReadyAtRef = useRef(0);
 
     const voiceSupported = typeof window !== 'undefined'
         && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
@@ -196,6 +214,59 @@ export default function ExamPage() {
         }, 30);
     }, [clearAnnouncementTimer]);
 
+    const pauseVoiceRecognition = useCallback(() => {
+        if (resumeListeningTimerRef.current) {
+            clearTimeout(resumeListeningTimerRef.current);
+            resumeListeningTimerRef.current = null;
+        }
+        listeningControlsRef.current.stopListening();
+    }, []);
+
+    const resumeVoiceRecognitionSoon = useCallback((delay = SPEECH_INPUT_RESUME_DELAY) => {
+        if (resumeListeningTimerRef.current) {
+            clearTimeout(resumeListeningTimerRef.current);
+        }
+
+        resumeListeningTimerRef.current = setTimeout(() => {
+            resumeListeningTimerRef.current = null;
+            ttsActiveRef.current = false;
+            voiceInputReadyAtRef.current = Date.now();
+            listeningControlsRef.current.startListening();
+        }, delay);
+    }, []);
+
+    const speakForExam = useCallback((textInput, options = {}) => {
+        const runId = ++speechRunRef.current;
+        const originalOnEnd = options.onEnd;
+
+        pauseVoiceRecognition();
+        stopSomaliAudio();
+        ttsActiveRef.current = true;
+        voiceInputReadyAtRef.current = Number.POSITIVE_INFINITY;
+
+        speak(textInput, {
+            ...options,
+            onEnd: () => {
+                if (speechRunRef.current !== runId) return;
+                if (originalOnEnd) originalOnEnd();
+                if (speechRunRef.current !== runId) return;
+
+                ttsActiveRef.current = false;
+                voiceInputReadyAtRef.current = Date.now() + SPEECH_INPUT_RESUME_DELAY;
+                resumeVoiceRecognitionSoon();
+            }
+        });
+    }, [pauseVoiceRecognition, resumeVoiceRecognitionSoon, speak]);
+
+    const stopExamSpeech = useCallback(() => {
+        speechRunRef.current += 1;
+        ttsActiveRef.current = false;
+        voiceInputReadyAtRef.current = Date.now() + SPEECH_INPUT_RESUME_DELAY;
+        stopSomaliAudio();
+        stopTTS();
+        resumeVoiceRecognitionSoon();
+    }, [resumeVoiceRecognitionSoon, stopTTS]);
+
     const announce = useCallback((message, options = {}) => {
         const {
             toast = true,
@@ -217,9 +288,9 @@ export default function ExamPage() {
         }
 
         if (speakMessage) {
-            speak(message, speechOptions);
+            speakForExam(message, speechOptions);
         }
-    }, [pushFeedback, speak, updateLiveRegion]);
+    }, [pushFeedback, speakForExam, updateLiveRegion]);
 
     const clearDictationTimer = useCallback(() => {
         if (dictationTimeoutRef.current) {
@@ -463,8 +534,12 @@ export default function ExamPage() {
         return null;
     }, [currentQuestion]);
 
-    const selectOption = useCallback((letterOrInput) => {
+    const selectOption = useCallback((letterOrInput, source = 'manual') => {
         if (!currentQuestion || currentQuestion.type === 'open-ended') return false;
+
+        if (source === 'voice' && (ttsActiveRef.current || Date.now() < voiceInputReadyAtRef.current)) {
+            return false;
+        }
 
         const option = findOptionByInput(letterOrInput);
         if (!option) {
@@ -486,7 +561,7 @@ export default function ExamPage() {
             return false;
         }
 
-        stopTTS();
+        stopExamSpeech();
         setPendingAnswer(letter);
         setShowConfirm(true);
         setWaitingNextConfirm(false);
@@ -496,7 +571,7 @@ export default function ExamPage() {
             assertive: true
         });
         return true;
-    }, [announce, currentQuestion, findOptionByInput, stopTTS]);
+    }, [announce, currentQuestion, findOptionByInput, stopExamSpeech]);
 
     const readCurrentOptions = useCallback(() => {
         if (!currentQuestion) return;
@@ -506,12 +581,12 @@ export default function ExamPage() {
             return;
         }
 
-        stopTTS();
+        stopExamSpeech();
         const optionsSpeech = buildOptionsSpeech(currentQuestion);
         optionsSpeech.push('Say the option letter or speak the answer text to select your choice.');
-        speak(optionsSpeech);
+        speakForExam(optionsSpeech);
         announce(`Reading options for Question ${currentIndex + 1}.`, { toast: true, assertive: false });
-    }, [announce, currentIndex, currentQuestion, speak, stopTTS]);
+    }, [announce, currentIndex, currentQuestion, speakForExam]);
 
     const confirmAnswer = useCallback(async () => {
         if (!pendingAnswer || !currentQuestion) return;
@@ -525,12 +600,12 @@ export default function ExamPage() {
         setPendingAnswer(null);
         setWaitingNextConfirm(true);
 
-        stopTTS();
+        stopExamSpeech();
         announce(`Saved Option ${pendingAnswer}${optionText}. Say YES to move to the next question, or NO to stay on this question.`, {
             speakMessage: true,
             assertive: true
         });
-    }, [announce, currentQuestion, pendingAnswer, saveAnswer, setAnswer, stopTTS]);
+    }, [announce, currentQuestion, pendingAnswer, saveAnswer, setAnswer, stopExamSpeech]);
 
     const cancelAnswer = useCallback(() => {
         setPendingAnswer(null);
@@ -712,6 +787,7 @@ export default function ExamPage() {
     };
 
     const commandMap = {
+        __isWaitingConfirmation__: () => Boolean(showConfirm || waitingAnswerConfirm || waitingNextConfirm || showFinishModal),
         __shouldMatchOption__: () => currentQuestion?.type !== 'open-ended',
         next: () => {
             setWaitingNextConfirm(false);
@@ -758,11 +834,11 @@ export default function ExamPage() {
         'submit': () => openFinishDialog(),
         'stop reading': () => {
             activeQuestionIdRef.current = null;
-            stopTTS();
+            stopExamSpeech();
             announce('Speech stopped.', { toast: true, assertive: true });
         },
         finish: () => openFinishDialog(),
-        option: (letterOrInput) => selectOption(letterOrInput),
+        option: (letterOrInput) => selectOption(letterOrInput, 'voice'),
         'save answer': () => handleOpenEndedSubmit(),
         'clear answer': () => clearOpenEndedAnswer(),
         yes: handleYes,
@@ -783,7 +859,7 @@ export default function ExamPage() {
         startListening,
         stopListening,
         toggleListening
-    } = useVoiceCommands(commandMap, true, handleVoiceDictation);
+    } = useVoiceCommands(commandMap, true, handleVoiceDictation, EXAM_RECOGNITION_OPTIONS);
 
     useEffect(() => {
         if (!exam) return;
@@ -872,11 +948,25 @@ export default function ExamPage() {
     }, [announce, exam?.id]);
 
     useEffect(() => {
+        if (resumeListeningTimerRef.current) {
+            clearTimeout(resumeListeningTimerRef.current);
+            resumeListeningTimerRef.current = null;
+        }
+
         if (isSpeaking) {
             stopListening();
         } else {
-            startListening();
+            resumeListeningTimerRef.current = setTimeout(() => {
+                startListening();
+            }, 350);
         }
+
+        return () => {
+            if (resumeListeningTimerRef.current) {
+                clearTimeout(resumeListeningTimerRef.current);
+                resumeListeningTimerRef.current = null;
+            }
+        };
     }, [isSpeaking, startListening, stopListening]);
 
     useEffect(() => {
@@ -889,7 +979,7 @@ export default function ExamPage() {
             clearAnnouncementTimer(statusTimerRef);
             clearAnnouncementTimer(alertTimerRef);
             stopListening();
-            stopTTS();
+            stopExamSpeech();
         };
     }, [clearAnnouncementTimer, clearDictationTimer, clearListeningPrompt, startListening, stopListening, stopTTS]);
 
@@ -1004,7 +1094,7 @@ export default function ExamPage() {
 
                 event.preventDefault();
                 activeQuestionIdRef.current = null;
-                stopTTS();
+                stopExamSpeech();
                 announce('Speech stopped.', { toast: true, assertive: true });
                 return;
             }
@@ -1476,3 +1566,11 @@ export default function ExamPage() {
         </div>
     );
 }
+
+
+
+
+
+
+
+

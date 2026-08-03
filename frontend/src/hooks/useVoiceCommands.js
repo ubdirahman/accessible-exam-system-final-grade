@@ -47,27 +47,48 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         if (!text) return false;
 
-        const commands = commandMapRef.current;
-
-        // 0. Confirmations FIRST (English + Somali) before MCQ matching.
-        const yesPatterns = /\b(yes|yeah|yep|yah|yup|sure|confirm|do it|okay|ok|o\.?k|haa+|haah|haye|hayeh|diyaar|waan diyaar ahay|ha+h?|huh|hot|heart|hard|high|hi)\b/i;
-        const noPatterns = /\b(no|nah|nope|cancel|stop|maya+|ma\s*ya|maaya+|mya+|mayya|ha bilaabin|ma diyaar ihi|ma diyaar ahi|nay|na+h|noo+|never)\b/i;
-        if (noPatterns.test(text) && commands['no']) {
-            setLastCommand('No');
-            commands['no']();
-            return true;
+        const commandOptions = optionsRef.current || {};
+        if (!isFinal && commandOptions.processInterimCommands !== true) {
+            return false;
         }
-        if (yesPatterns.test(text) && commands['yes']) {
-            setLastCommand('Yes');
-            commands['yes']();
-            return true;
+
+        const commands = commandMapRef.current || {};
+
+        const isWaitingConfirmation = typeof commands.__isWaitingConfirmation__ === 'function'
+            ? commands.__isWaitingConfirmation__()
+            : false;
+
+        // Allow interim results to trigger confirmation immediately when waiting for Yes/No
+        if (!isFinal && commandOptions.processInterimCommands !== true && !isWaitingConfirmation) {
+            return false;
+        }
+
+        const checkConfirmation = () => {
+            const yesPatterns = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa)(?:$|\b)/i;
+            const noPatterns = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax)(?:$|\b)/i;
+            if (noPatterns.test(text) && commands['no']) {
+                setLastCommand('No');
+                commands['no']();
+                return true;
+            }
+            if (yesPatterns.test(text) && commands['yes']) {
+                setLastCommand('Yes');
+                commands['yes']();
+                return true;
+            }
+            return false;
+        };
+
+        // 0. If actively waiting for confirmation modal/prompt, check Yes/No FIRST.
+        if (isWaitingConfirmation) {
+            if (checkConfirmation()) return true;
         }
 
         const allowFastOptionMatch = typeof commands.__shouldMatchOption__ === 'function'
             ? commands.__shouldMatchOption__(text)
             : true;
 
-        if (allowFastOptionMatch && commands['option']) {
+        if (isFinal && allowFastOptionMatch && commands['option']) {
             const words = text.toLowerCase().split(/\s+/);
             const aPatterns = /^(a|hey|ay|eight|8|eh|ate|eye|alpha|alif)$/i;
             const bPatterns = /^(b|be|bee|beat|busy|bravo|baa)$/i;
@@ -94,16 +115,9 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
             }
 
             if (!letter) {
-                const prefixMatch = text.match(/^(?:option|choice|letter|select)\s+([a-d])$/i);
+                const prefixMatch = text.match(/^(?:answer|option|choice|letter|select|choose|pick|dooro|jawaab)\s+([a-d])$/i);
                 if (prefixMatch) {
                     letter = prefixMatch[1].toUpperCase();
-                }
-            }
-
-            if (!letter) {
-                const optionMatchFast = text.match(/\b([a-d])\b/i);
-                if (optionMatchFast) {
-                    letter = optionMatchFast[1].toUpperCase();
                 }
             }
 
@@ -121,6 +135,11 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
                 setLastCommand(`Option: ${text}`);
                 return true;
             }
+        }
+
+        // Check confirmation after options if not already checked
+        if (!isWaitingConfirmation) {
+            if (checkConfirmation()) return true;
         }
 
         // 1. Data Extraction Patterns (Student ID, Exam Code)
@@ -164,9 +183,10 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         }
 
         // 3. Fallback for Dictation
+        // Fallback may return true (handled, ok to stop) or 'continue' (handled, keep listening)
         if (fallbackRef.current) {
-            const handled = fallbackRef.current(text, isFinal);
-            if (handled) return true;
+            const fallbackResult = fallbackRef.current(text, isFinal);
+            if (fallbackResult) return fallbackResult;
         }
 
         return false;
@@ -209,7 +229,10 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
                     if (handled) {
                         lastExecutedRef.current = now;
-                        if (!result.isFinal) {
+                        // Only stop recognition on interim if the handler says so.
+                        // Fallback handlers return 'continue' to keep listening
+                        // (e.g. during student ID dictation).
+                        if (!result.isFinal && handled !== 'continue') {
                             recognition.stop();
                         }
                         break;

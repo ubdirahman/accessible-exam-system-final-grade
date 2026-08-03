@@ -11,7 +11,9 @@ import {
     normalizeStudentIdFromSpeech,
     sanitizeStudentId,
     isLikelyStudentId,
-    spellStudentId
+    isCompleteStudentId,
+    spellStudentId,
+    mergeStudentIdSpeech
 } from '../utils/studentIdSpeech';
 import { somaliTtsOptions } from '../utils/somaliSpeech';
 import { playSomaliAudioFile, stopSomaliAudio, AUDIO_PROMPTS } from '../utils/audioPlayer';
@@ -22,17 +24,18 @@ const STUDENT_ID_RECOGNITION_OPTIONS = {
     fallbackLang: 'en-US',
     continuous: true,
     interimResults: true,
+    processInterimCommands: true,
     maxAlternatives: 5
 };
 const ENGLISH_ID_TTS_OPTIONS = {
     lang: 'en-US',
-    rate: 0.78,
+    rate: 0.65,
     pitch: 1,
     volume: 1
 };
 
 export default function LoginPage() {
-    const [mode, setMode] = useState('admin'); // 'student' | 'admin' | 'teacher'
+    const [mode, setMode] = useState('student'); // 'student' | 'admin' | 'teacher'
     const [studentId, setStudentId] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -44,6 +47,7 @@ export default function LoginPage() {
     const [idConfirmationMode, setIdConfirmationMode] = useState('login');
     const [lastIdActivityAt, setLastIdActivityAt] = useState(Date.now());
     const [silenceConfirmedId, setSilenceConfirmedId] = useState('');
+    const [displayTranscript, setDisplayTranscript] = useState('');
 
     // Voice Flow State: 'IDLE' | 'LISTENING_ID' | 'CONFIRM_ID'
     const [voiceStep, setVoiceStep] = useState('IDLE');
@@ -57,6 +61,9 @@ export default function LoginPage() {
     const navigate = useNavigate();
     const { speak, stop } = useTTS();
     const interimIdTimeoutRef = useRef(null);
+    const modeRef = useRef(mode);
+    const voiceRunRef = useRef(0);
+    const resumeListeningTimerRef = useRef(null);
 
     const [isAudioPlaying, setIsAudioPlaying] = useState(false);
     const isAudioPlayingRef = useRef(false);
@@ -74,9 +81,31 @@ export default function LoginPage() {
         }
     }, []);
 
+    const cancelStudentVoiceFlow = useCallback(() => {
+        voiceRunRef.current += 1;
+        if (resumeListeningTimerRef.current) {
+            clearTimeout(resumeListeningTimerRef.current);
+            resumeListeningTimerRef.current = null;
+        }
+        stop();
+        stopSomaliAudio();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        setAudioPlayingState(false);
+    }, [setAudioPlayingState, stop]);
+
+    useEffect(() => {
+        modeRef.current = mode;
+    }, [mode]);
+
     useEffect(() => {
         voiceStepRef.current = voiceStep;
     }, [voiceStep]);
+
+    const updateStudentId = useCallback((newId) => {
+        const clean = sanitizeStudentId(newId);
+        studentIdRef.current = clean;
+        setStudentId(clean);
+    }, []);
 
     useEffect(() => {
         studentIdRef.current = studentId;
@@ -102,22 +131,32 @@ export default function LoginPage() {
     }, []);
 
     const speakAndListen = useCallback((text, options = {}) => {
+        const runId = ++voiceRunRef.current;
         const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
+        const isActiveRun = () => modeRef.current === 'student' && voiceRunRef.current === runId;
+
         pauseListening();
         stop();
         stopSomaliAudio();
         setAudioPlayingState(true);
 
-        // Helper: resume listening after a short delay to prevent mic picking up audio tail
         const safeResume = () => {
-            setTimeout(() => {
-                if (mode === 'student') {
+            if (resumeListeningTimerRef.current) clearTimeout(resumeListeningTimerRef.current);
+            resumeListeningTimerRef.current = setTimeout(() => {
+                resumeListeningTimerRef.current = null;
+                if (isActiveRun()) {
                     resumeListening();
                 }
             }, 300);
         };
 
-        // Check if prompt is asking to read/enter student ID -> play native Somali pre-recorded audio!
+        const finishPrompt = () => {
+            if (!isActiveRun()) return;
+            setAudioPlayingState(false);
+            if (options.onEnd) options.onEnd();
+            safeResume();
+        };
+
         const isPleaseEnterId = typeof text === 'string' && (
             text.includes('Fadlan akhri nambarkaaga') ||
             text.includes('Fadlan geli ID-gaaga') ||
@@ -125,54 +164,51 @@ export default function LoginPage() {
         );
 
         if (isPleaseEnterId) {
-            playSomaliAudioFile(AUDIO_PROMPTS.PLEASE_ENTER_ID, () => {
-                setAudioPlayingState(false);
-                if (options.onEnd) options.onEnd();
-                safeResume();
-            });
+            playSomaliAudioFile(AUDIO_PROMPTS.PLEASE_ENTER_ID, finishPrompt);
             return;
         }
 
         speak(text, somaliTtsOptions({
             ...options,
-            onEnd: () => {
-                setAudioPlayingState(false);
-                if (options.onEnd) options.onEnd();
-                safeResume();
-            }
+            onEnd: finishPrompt
         }));
-    }, [mode, speak, stop, setAudioPlayingState]);
+    }, [speak, stop, setAudioPlayingState]);
 
     const playConfirmationSequence = useCallback((cleanId) => {
+        const runId = ++voiceRunRef.current;
         const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
+        const isActiveRun = () => modeRef.current === 'student' && voiceRunRef.current === runId;
+
         pauseListening();
         stop();
         stopSomaliAudio();
         setAudioPlayingState(true);
 
         const safeResume = () => {
-            setTimeout(() => {
-                if (mode === 'student') {
+            if (resumeListeningTimerRef.current) clearTimeout(resumeListeningTimerRef.current);
+            resumeListeningTimerRef.current = setTimeout(() => {
+                resumeListeningTimerRef.current = null;
+                if (isActiveRun()) {
                     resumeListening();
                 }
             }, 300);
         };
 
-        // Step 1: Native Somali voice "Ma hubtaa in ID-gaagu yahay..."
         playSomaliAudioFile(AUDIO_PROMPTS.ARE_YOU_SURE_ID, () => {
-            // Step 2: Spell out student ID characters slowly and distinctly
+            if (!isActiveRun()) return;
             speak(spellStudentId(cleanId), {
                 ...ENGLISH_ID_TTS_OPTIONS,
                 onEnd: () => {
-                    // Step 3: Native Somali voice "Haddii uu sax yahay dheh haa..."
+                    if (!isActiveRun()) return;
                     playSomaliAudioFile(AUDIO_PROMPTS.YES_NO_CONFIRM, () => {
+                        if (!isActiveRun()) return;
                         setAudioPlayingState(false);
                         safeResume();
                     });
                 }
             });
         });
-    }, [mode, speak, stop, setAudioPlayingState]);
+    }, [speak, stop, setAudioPlayingState]);
 
     const replayCurrentVoicePrompt = useCallback(() => {
         stop();
@@ -191,7 +227,7 @@ export default function LoginPage() {
     const startGuidedEntry = useCallback((resetCurrent = false) => {
         const existingId = resetCurrent ? '' : sanitizeStudentId(studentIdRef.current);
         if (resetCurrent) {
-            setStudentId('');
+            updateStudentId('');
             setSilenceConfirmedId('');
         }
 
@@ -239,7 +275,7 @@ export default function LoginPage() {
             return;
         }
 
-        setStudentId('');
+        updateStudentId('');
         setSilenceConfirmedId('');
         setError('');
         setIdConfirmationMode('login');
@@ -258,7 +294,7 @@ export default function LoginPage() {
         }
 
         const updated = current.slice(0, -1);
-        setStudentId(updated);
+        updateStudentId(updated);
         setSilenceConfirmedId('');
         setError('');
         setIdConfirmationMode('login');
@@ -278,7 +314,7 @@ export default function LoginPage() {
         const cleanId = normalizeStudentIdFromSpeech(candidate) || sanitizeStudentId(candidate);
         if (!cleanId) {
             speakAndListen('Fadlan mar kale akhri nambarkaaga ardayga.');
-            setStudentId('');
+            updateStudentId('');
             setVoiceStep('LISTENING_ID');
             focusStudentInput();
             return;
@@ -287,13 +323,13 @@ export default function LoginPage() {
         const isValid = isLikelyStudentId(cleanId);
         if (!isValid) {
             speakAndListen('Fadlan mar kale akhri nambarkaaga ardayga.');
-            setStudentId('');
+            updateStudentId('');
             setVoiceStep('LISTENING_ID');
             focusStudentInput();
             return;
         }
 
-        setStudentId(cleanId);
+        updateStudentId(cleanId);
         setSilenceConfirmedId('');
         setError('');
         setIdConfirmationMode('login');
@@ -306,7 +342,7 @@ export default function LoginPage() {
         const cleanId = normalizeStudentIdFromSpeech(candidate) || sanitizeStudentId(candidate);
         if (!cleanId) return;
 
-        setStudentId(cleanId);
+        updateStudentId(cleanId);
         setError('');
         setIdConfirmationMode('save');
         setVoiceStep('CONFIRM_ID');
@@ -323,7 +359,7 @@ export default function LoginPage() {
         }
 
         localStorage.setItem(LAST_STUDENT_ID_KEY, cleanId);
-        setStudentId(cleanId);
+        updateStudentId(cleanId);
         setError('');
         setSilenceConfirmedId(cleanId);
         setIdConfirmationMode('login');
@@ -355,7 +391,7 @@ export default function LoginPage() {
         }
 
         const nextId = sanitizeStudentId(`${replace ? '' : studentIdRef.current}${chunkValue}`);
-        setStudentId(nextId);
+        updateStudentId(nextId);
         setSilenceConfirmedId('');
         setError('');
         setIdConfirmationMode('login');
@@ -373,40 +409,81 @@ export default function LoginPage() {
     }, [focusStudentInput, markStudentIdActivity, promptStudentIdConfirmation, speakAndListen]);
 
     const handleStudentVoiceFallback = useCallback((spokenText, isFinal) => {
-        if (mode !== 'student' || voiceStepRef.current !== 'LISTENING_ID' || isAudioPlayingRef.current) return false;
+        if (mode !== 'student') return false;
 
         const cleaned = String(spokenText || '').trim();
         if (!cleaned) return false;
 
-        const chunks = extractStudentIdChunks(cleaned);
-        if (!chunks.length) return false;
+        // If in CONFIRM_ID or CONFIRM_CLEAR state, evaluate YES / NO intent immediately
+        if (voiceStepRef.current === 'CONFIRM_ID' || voiceStepRef.current === 'CONFIRM_CLEAR') {
+            const yesRegex = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa)(?:$|\b)/i;
+            const noRegex = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax)(?:$|\b)/i;
 
-        const finalId = normalizeStudentIdFromSpeech(cleaned) || chunks.join('');
-        
-        if (isFinal) {
-            if (interimIdTimeoutRef.current) clearTimeout(interimIdTimeoutRef.current);
-            if (finalId) {
-                setStudentId(finalId); // Show in input immediately
-                promptStudentIdConfirmation(finalId);
-                return true;
+            if (yesRegex.test(cleaned)) {
+                const commands = getCommandMap();
+                if (typeof commands['yes'] === 'function') {
+                    commands['yes']();
+                    return true;
+                }
             }
-        } else {
-            // Show ID in input field immediately so student sees what's captured
-            if (finalId) {
-                setStudentId(finalId);
-            }
-            // Set a timeout to auto-confirm if they pause speaking for 2 seconds.
-            if (interimIdTimeoutRef.current) clearTimeout(interimIdTimeoutRef.current);
-            if (finalId && finalId.length >= 2) {
-                interimIdTimeoutRef.current = setTimeout(() => {
-                    if (voiceStepRef.current === 'LISTENING_ID') {
-                        promptStudentIdConfirmation(finalId);
-                    }
-                }, 2000);
+
+            if (noRegex.test(cleaned)) {
+                const commands = getCommandMap();
+                if (typeof commands['no'] === 'function') {
+                    commands['no']();
+                    return true;
+                }
             }
         }
-        return false;
-    }, [mode, promptStudentIdConfirmation]);
+
+        if (voiceStepRef.current !== 'LISTENING_ID') return false;
+
+        // ── INTERIM results: display only, NEVER touch the student ID ──
+        if (!isFinal) {
+            setDisplayTranscript(cleaned);
+            return 'continue'; // keep recognition running
+        }
+
+        // ── FINAL results: extract ID chunks and append to studentId ──
+        const chunks = extractStudentIdChunks(cleaned);
+        if (!chunks.length) return true; // consumed but no useful chunks
+
+        const spokenId = chunks.join('');
+        if (!spokenId) return true;
+
+        // Simple append to current ID (final results are clean, one per utterance)
+        const current = sanitizeStudentId(studentIdRef.current);
+        let nextId = current + spokenId;
+
+        // Cap at 8 characters max (typical student ID: 1 letter + 7 digits)
+        if (nextId.length > 8) {
+            // If spoken alone is a full valid ID, use it as replacement
+            if (/^[A-Z]\d{4,7}$/.test(spokenId) || /^\d{7,8}$/.test(spokenId)) {
+                nextId = spokenId;
+            } else {
+                nextId = nextId.slice(0, 8);
+            }
+        }
+
+        updateStudentId(nextId);
+        setDisplayTranscript(cleaned);
+        markStudentIdActivity();
+
+        // Clear any pending auto-confirm timer
+        if (interimIdTimeoutRef.current) clearTimeout(interimIdTimeoutRef.current);
+
+        // If the ID is now complete (>= 7 chars), confirm after brief pause
+        if (isCompleteStudentId(nextId)) {
+            interimIdTimeoutRef.current = setTimeout(() => {
+                if (voiceStepRef.current === 'LISTENING_ID') {
+                    promptStudentIdConfirmation(sanitizeStudentId(studentIdRef.current));
+                }
+            }, 3000); // 3 seconds after last final result
+        }
+
+        focusStudentInput();
+        return true;
+    }, [focusStudentInput, markStudentIdActivity, mode, promptStudentIdConfirmation, updateStudentId]);
 
     const performStudentLogin = useCallback(async (id = studentIdRef.current) => {
         const normalizedId = normalizeStudentIdFromSpeech(id || studentIdRef.current) || sanitizeStudentId(id || studentIdRef.current);
@@ -503,6 +580,7 @@ export default function LoginPage() {
 
     const getCommandMap = () => {
         const baseCommands = {
+            __isWaitingConfirmation__: () => Boolean(voiceStep === 'CONFIRM_ID' || voiceStep === 'CONFIRM_CLEAR'),
             'set student id': (id) => promptStudentIdConfirmation(id),
             'repeat id': () => readCurrentStudentId(),
             'read id': () => readCurrentStudentId(),
@@ -616,10 +694,21 @@ export default function LoginPage() {
                 ...baseCommands,
                 'yes': handleConfirmYes,
                 'haa': handleConfirmYes,
+                'ha': handleConfirmYes,
+                'haah': handleConfirmYes,
+                'hah': handleConfirmYes,
+                'huh': handleConfirmYes,
                 'haye': handleConfirmYes,
+                'hayeh': handleConfirmYes,
                 'diyaar': handleConfirmYes,
+                'sax': handleConfirmYes,
+                'waa sax': handleConfirmYes,
+                'geli': handleConfirmYes,
+                'ingeli': handleConfirmYes,
                 'no': handleConfirmNo,
                 'maya': handleConfirmNo,
+                'mayo': handleConfirmNo,
+                'tirtir': handleConfirmNo,
                 'try': () => promptStudentIdConfirmation(studentIdRef.current),
                 'again': () => promptStudentIdConfirmation(studentIdRef.current),
                 'repeat': () => promptStudentIdConfirmation(studentIdRef.current)
@@ -664,10 +753,10 @@ export default function LoginPage() {
         } else {
             setGuidedEntryMode(false);
             stopListening();
-            stop();
+            cancelStudentVoiceFlow();
             setVoiceStep('IDLE');
         }
-    }, [focusStudentInput, mode, speakAndListen, stopListening, stop]);
+    }, [cancelStudentVoiceFlow, focusStudentInput, mode, speakAndListen, stopListening]);
 
     useEffect(() => {
         if (mode !== 'student' || loading || voiceStep !== 'LISTENING_ID') return undefined;
@@ -677,11 +766,11 @@ export default function LoginPage() {
         if (currentId === silenceConfirmedId) return undefined;
 
         const elapsed = Date.now() - lastIdActivityAt;
-        const remaining = Math.max(0, 60000 - elapsed);
+        const remaining = Math.max(0, 10000 - elapsed);
 
         const timeoutId = window.setTimeout(() => {
             const latestId = sanitizeStudentId(studentIdRef.current);
-            if (latestId && voiceStepRef.current === 'LISTENING_ID') {
+            if (latestId && voiceStepRef.current === 'LISTENING_ID' && isLikelyStudentId(latestId)) {
                 promptSilenceStudentIdConfirmation(latestId);
             }
         }, remaining);
@@ -695,13 +784,10 @@ export default function LoginPage() {
     // if the user switches to Admin/Teacher or leaves the page.
     useEffect(() => {
         const cleanupAudioAndVoice = () => {
-            stop(); // Stop any ongoing TTS
-            stopSomaliAudio(); // Stop any ongoing native audio playback
+            cancelStudentVoiceFlow();
             if (interimIdTimeoutRef.current) {
                 clearTimeout(interimIdTimeoutRef.current);
-            }
-            if (mode !== 'student') {
-                setAudioPlayingState(false);
+                interimIdTimeoutRef.current = null;
             }
         };
 
@@ -711,10 +797,8 @@ export default function LoginPage() {
             setVoiceStep('IDLE');
         }
 
-        return () => {
-            cleanupAudioAndVoice();
-        };
-    }, [mode, stop, setAudioPlayingState]);
+        return cleanupAudioAndVoice;
+    }, [cancelStudentVoiceFlow, mode]);
 
     const roleConfig = {
         student: {
@@ -738,6 +822,8 @@ export default function LoginPage() {
     }[mode];
 
     const switchMode = (nextMode) => {
+        listeningControlsRef.current.stopListening();
+        cancelStudentVoiceFlow();
         setMode(nextMode);
         setError('');
     };
@@ -761,9 +847,9 @@ export default function LoginPage() {
                                 isListening ? (lastCommand || 'Dhageysanayaa ID-ga...') : 'Codku wuu dansan yahay'}
                         </span>
                     </div>
-                    {isListening && transcript && voiceStep === 'LISTENING_ID' && (
+                    {(displayTranscript || transcript || studentId) && (
                         <div className="transcript student-login-transcript">
-                            La maqlay: {transcript}
+                            La maqlay: {displayTranscript || transcript || studentId}
                         </div>
                     )}
                 </>
@@ -866,7 +952,7 @@ export default function LoginPage() {
                                         placeholder="Ku dhawaaq ama qor nambarkaaga ardayga"
                                         value={studentId}
                                         onChange={(e) => {
-                                            setStudentId(sanitizeStudentId(e.target.value));
+                                            setStudentId(e.target.value.toUpperCase());
                                             setSilenceConfirmedId('');
                                             setError('');
                                             setIdConfirmationMode('login');
@@ -876,7 +962,6 @@ export default function LoginPage() {
                                             }
                                         }}
                                         onKeyDown={(e) => e.key === 'Enter' && handleStudentLogin(e)}
-                                        disabled={isAudioPlaying}
                                         aria-label="Student ID Input"
                                         required
                                         autoFocus
@@ -1009,3 +1094,8 @@ export default function LoginPage() {
         </div>
     );
 }
+
+
+
+
+

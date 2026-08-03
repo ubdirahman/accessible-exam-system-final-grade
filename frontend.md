@@ -218,23 +218,51 @@ Bog walba wuxuu leeyahay shaqo u gaar ah. Tusaale ahaan:
 
 ### `frontend/src/utils/`
 
-Waxaa yaal saddex utility file:
+Waxaa yaal afar utility file oo muhiim ah:
 
 - `studentIdSpeech.js`
+- `audioPlayer.js`
+- `somaliSpeech.js`
 - `search.js`
 - `resultExamSync.js`
 
-`studentIdSpeech.js`:
+## Voice & Audio Architecture (Codadka iyo Speech System-ka)
 
-- wuxuu ka caawiyaa parsing student ID laga sheegay cod ahaan
-- wuxuu taageeraa digit words, letter words, iyo Somali/English mixed speech
+Frontend-ku wuxuu leeyahay nidaam cod oo aad u horumarsan oo loogu talagalay ardayda indhoolaha ah (visually impaired students). Nidaamkan wuxuu isku dhiibayaa **Web Speech API Recognition**, **Speech Synthesis (TTS)**, iyo **Pre-recorded Human Somali Audio**.
+
+### 1. Web Speech Recognition (`useVoiceCommands.js`)
+- **Continuous Stream**: Wuxuu adeegsadaa `continuous: true` iyo `interimResults: true`.
+- **Interim Continuation (`'continue'`)**: Marka uu ardaygu leeyahay ID-ga, interim results-ku waxa ay soo celiyaan `'continue'`. Tani waxay ka hor tagtaa in `recognition.stop()` la waco ka hor inta uu ardaygu dhammaystirin hadalka.
+- **Intent Matching**: Wuxuu leeyahay matching automatic ah oo lagu garto amarrada sida `next`, `previous`, `repeat`, `finish`, `option A-D`, `yes`, `no`, `haa`, `maya`.
+
+### 2. Text-to-Speech (`useTTS.js`)
+- Wuxuu adeegsadaa `window.speechSynthesis`.
+- Wuxuu si otomaatik ah u doortaa codka labka ah ee ugu dabiicisan (`findBestMaleVoice`).
+- Wuxuu taageeraa akhrinta su'aalaha, nambarrada ID-ga (`spellStudentId`), iyo habaynta xawaaraha (`rate`), joojinta (`stop`), iyo bilaabidda (`speak`).
+
+### 3. Student ID Dictation System (`studentIdSpeech.js`)
+Nidaamkan wuxuu u oggolaanayaa ardayga inuu ID-giisa ku dhiho Af-Somali ama Af-Ingiriisi, ha noqoto **si degdeg ah (fast)** ama **si tartiib ah (slow/digit-by-digit)**.
+- **Digit Recognition Map (`DIGIT_WORDS`)**: Wuxuu daboolaa 0-9 Af-Somali iyo Af-Ingiriisi, kuwo la mid ah (phonetics), ordinals (`kowaad`, `labaad`, `saddexaad`), iyo tens/hundreds (`toban`, `labaatan`, `konton`, `boqol`, `twenty`, `thirty`, `hundred`).
+- **Letter Recognition Map (`LETTER_WORDS` & `PHRASE_REPLACEMENTS`)**: Wuxuu u rogaa dhawaaqyada sida *"see"*, *"sea"*, *"cee"* ➔ **C**, *"bee"* ➔ **B**, *"dee"* ➔ **D**, *"kay"* ➔ **K**, *"jay"* ➔ **J**, *"why"* ➔ **Y**.
+- **Ignored Filler Tokens (`IGNORED_TOKENS`)**: Erayada sida `letter`, `character`, `digit`, `number`, `my`, `id`, `is`, `waa`, `fadlan`, `nambarka` waa la dhaafeysa si toos ahna ID-ga kaliya loo soo saaro.
+- **Cumulative Dictation (`mergeStudentIdSpeech`)**: Wuxuu si caqli badan u dhex-dhex-dhexaadiyaa hadalkii hore iyo kan cusub (`"C"` ➔ `"C1"` ➔ `"C12"` ➔ `"C1220199"`) iyadoo aan nambaradii hore la tirtirin.
+
+### 4. Pre-recorded Audio Player (`audioPlayer.js`)
+Frontend-ku wuxuu leeyahay faylal cod bani'aadam Somali ah oo diyaarsan oo la meelmariyo marka ardaygu ID-ga galinayo ama imtixaanka bilaabayo:
+- `fadlan-geli-idgaag.mp4` (`PLEASE_ENTER_ID`)
+- `mahubta-id-ah.mp4` (`ARE_YOU_SURE_ID`)
+- `haa-maya.mp4` (`YES_NO_CONFIRM`)
+- `sodhawow.mp4` (`WELCOME`)
+- `waxan-rabaa-inaa-kubiilaabo-examka.mp4` (`START_EXAM_QUESTION`)
+
+### 5. Synchronous State Syncing (`LoginPage.jsx`)
+- Marka ID-ga cod ahaan loo dhiho, `updateStudentId(newId)` waxay **synchronously** u cusboonaysiisaa `studentIdRef.current` ka hor `setStudentId()`. Tani waxay ka hor tagtaa closure bugs-ka React.
+- **2-Second Silence Threshold**: Marka uu ardaygu amuso 2 seconds ka dib dhihidda ID-ga, nidaamku si otomaatik ah ayuu u bilaabaa xaqiijinta codka (`promptSilenceStudentIdConfirmation`).
 
 `search.js`:
-
 - wuxuu bixiyaa text normalization iyo search matching helpers
 
 `resultExamSync.js`:
-
 - wuxuu sameeyaa sync event u dhexeeya tabs/windows
 - wuxuu adeegsadaa `localStorage`, `BroadcastChannel`, iyo `CustomEvent`
 
