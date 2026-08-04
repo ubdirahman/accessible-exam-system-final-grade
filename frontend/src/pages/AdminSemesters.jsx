@@ -5,8 +5,7 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali), numbers, and spaces in name fields
-const nameOnly = (val) => val.replace(/[^a-zA-Z0-9\s\u0600-\u06FF\-']/g, '');
+import { startsWithText } from '../utils/validators';
 
 export default function AdminSemesters() {
     const { user } = useAuth();
@@ -81,13 +80,17 @@ export default function AdminSemesters() {
         if (selectedSemester) loadSemesterClasses(selectedSemester._id);
     }, [selectedSemester]);
 
-    const isNameEmpty = () => !form.name?.trim();
-    const showNameError = () => touched.name && isNameEmpty();
+    const getNameError = () => {
+        if (!form.name?.trim()) return 'Semester Name is required';
+        if (!startsWithText(form.name)) return 'Semester Name must start with a letter (e.g. Semester 1, Fall 2024)';
+        return '';
+    };
+    const showNameError = () => touched.name && Boolean(getNameError());
 
     const createSemester = async (e) => {
         e.preventDefault();
         setTouched({ name: true });
-        if (isNameEmpty()) return;
+        if (getNameError()) return;
 
         const isPastDate = (dateStr) => {
             if (!dateStr) return false;
@@ -158,7 +161,10 @@ export default function AdminSemesters() {
 
     const saveEdit = async (e) => {
         e.stopPropagation();
-        if (!editForm.name?.trim()) return;
+        if (!editForm.name?.trim() || !startsWithText(editForm.name)) {
+            setError('Semester Name must start with a letter (e.g. Semester 1, Fall 2024).');
+            return;
+        }
 
         const isPastDate = (dateStr) => {
             if (!dateStr) return false;
@@ -306,15 +312,15 @@ export default function AdminSemesters() {
                     <h3 className="mb-sm">Add New Semester</h3>
                     <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={createSemester}>
                         <div className="input-group">
-                            <label>Semester Name</label>
+                            <label>Semester Name (First character must be a letter)</label>
                             <input
                                 className={`input${showNameError() ? ' input-error' : ''}`}
                                 value={form.name}
-                                onChange={e => setForm({ ...form, name: nameOnly(e.target.value) })}
+                                onChange={e => setForm({ ...form, name: e.target.value })}
                                 onBlur={() => setTouched(p => ({ ...p, name: true }))}
-                                placeholder="e.g., Fall 2024"
+                                placeholder="e.g. Semester 1, Fall 2024"
                             />
-                            {showNameError() && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showNameError() && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getNameError()}</span>}
                         </div>
                         <div className="input-group">
                             <label>Start Date</label>

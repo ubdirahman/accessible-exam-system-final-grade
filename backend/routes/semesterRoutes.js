@@ -31,7 +31,9 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
         const { name, startDate, endDate } = req.body;
-        if (!name) return res.status(400).json({ message: 'Semester name is required.' });
+        if (!name || !/^[a-zA-Z\u0600-\u06FF]/.test(name.trim())) {
+            return res.status(400).json({ message: 'Semester name must start with a letter (e.g. Semester 1, Fall 2024).' });
+        }
 
         const isPastDate = (dateStr) => {
             if (!dateStr) return false;
@@ -50,7 +52,7 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
         }
 
         const semester = await Semester.create({
-            name,
+            name: name.trim(),
             startDate,
             endDate,
             facultyId,
@@ -77,6 +79,10 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
 
         const { name, startDate, endDate, isActive } = req.body;
 
+        if (name && !/^[a-zA-Z\u0600-\u06FF]/.test(name.trim())) {
+            return res.status(400).json({ message: 'Semester name must start with a letter (e.g. Semester 1, Fall 2024).' });
+        }
+
         const isPastDate = (dateStr) => {
             if (!dateStr) return false;
             const inputDate = new Date(dateStr);
@@ -94,7 +100,7 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
             return res.status(400).json({ message: 'End date cannot be in the past.' });
         }
 
-        const updates = (({ name, startDate, endDate, isActive }) => ({ name, startDate, endDate, isActive }))(req.body);
+        const updates = (({ name, startDate, endDate, isActive }) => ({ name: name ? name.trim() : existing.name, startDate, endDate, isActive }))(req.body);
         const semester = await Semester.findOneAndUpdate(
             { _id: req.params.id, facultyId },
             updates,

@@ -6,8 +6,7 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
-const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
+import { textOnly, isTextOnly } from '../utils/validators';
 
 export default function AdminStudents() {
     const { user } = useAuth();
@@ -137,16 +136,24 @@ export default function AdminStudents() {
     }, [selectedClass]);
 
     // Form validation
-    const formErrors = {
-        name: !newStudent.name?.trim(),
-        studentId: !newStudent.studentId?.trim()
+    const getFieldError = (field) => {
+        if (field === 'name') {
+            if (!newStudent.name?.trim()) return 'Full Name is required';
+            if (!isTextOnly(newStudent.name)) return 'Full Name must contain text only (letters and spaces)';
+        }
+        if (field === 'studentId') {
+            if (!newStudent.studentId?.trim()) return 'Student ID is required';
+        }
+        return '';
     };
-    const showFormError = (field) => touched[field] && formErrors[field];
+
+    const showFormError = (field) => touched[field] && getFieldError(field);
+    const hasErrors = Boolean(getFieldError('name') || getFieldError('studentId'));
 
     const addStudent = async (e) => {
         e.preventDefault();
         setTouched({ name: true, studentId: true });
-        if (Object.values(formErrors).some(Boolean)) return;
+        if (hasErrors) return;
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
             const cleanStudentId = sanitizeStudentId(newStudent.studentId);
@@ -159,6 +166,7 @@ export default function AdminStudents() {
             setNewStudent({ name: '', studentId: '', email: '', classId: '' });
             setShowStudentForm(false);
             setTouched({});
+            setError(null);
             loadStudents(selectedClass._id);
         } catch (err) {
             setError(err.response?.data?.message || 'Error adding student');
@@ -192,7 +200,10 @@ export default function AdminStudents() {
     };
 
     const saveEdit = async () => {
-        if (!editForm.name?.trim()) return;
+        if (!editForm.name?.trim() || !isTextOnly(editForm.name)) {
+            setError('Student Name must contain text only (letters and spaces).');
+            return;
+        }
         try {
             const fid = isSuper ? selectedFaculty : user?.facultyId;
             const student = students.find(s => s._id === editingId);
@@ -203,6 +214,7 @@ export default function AdminStudents() {
                 facultyId: fid
             }, { params: { facultyId: fid } });
             setEditingId(null);
+            setError(null);
             loadStudents(selectedClass._id);
         } catch (err) {
             setError(err.response?.data?.message || 'Error saving student');
@@ -345,15 +357,15 @@ export default function AdminStudents() {
                         <h3 className="mb-sm">Register New Student to {selectedClass.name}</h3>
                         <form onSubmit={addStudent} className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
                             <div className="input-group">
-                                <label>Full Name</label>
+                                <label>Full Name (Text only)</label>
                                 <input
                                     className={`input${showFormError('name') ? ' input-error' : ''}`}
                                     value={newStudent.name}
-                                    onChange={e => setNewStudent({ ...newStudent, name: nameOnly(e.target.value) })}
+                                    onChange={e => setNewStudent({ ...newStudent, name: textOnly(e.target.value) })}
                                     onBlur={() => setTouched(p => ({ ...p, name: true }))}
                                     placeholder="e.g. Ahmed Ali"
                                 />
-                                {showFormError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                                {showFormError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('name')}</span>}
                             </div>
                             <div className="input-group">
                                 <label>Student ID</label>
@@ -365,7 +377,7 @@ export default function AdminStudents() {
                                     maxLength={40}
                                     placeholder="e.g. CA220199"
                                 />
-                                {showFormError('studentId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                                {showFormError('studentId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('studentId')}</span>}
                             </div>
                             <div className="input-group">
                                 <label>Email Address</label>
@@ -407,7 +419,7 @@ export default function AdminStudents() {
                                         <tr key={s._id}>
                                             <td style={{ fontWeight: 600 }}>
                                                 {editingId === s._id
-                                                    ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: nameOnly(e.target.value) })} />
+                                                    ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: textOnly(e.target.value) })} />
                                                     : s.name}
                                             </td>
                                             <td>{s.studentId}</td>

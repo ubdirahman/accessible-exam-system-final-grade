@@ -47,13 +47,24 @@ router.post('/', verifyToken, requireSuperAdmin, async (req, res) => {
             return res.status(400).json({ message: 'Name, code, and admin credentials are required.' });
         }
 
+        if (!/^[a-zA-Z0-9]+$/.test(code.trim())) {
+            return res.status(400).json({ message: 'Faculty code must contain letters and numbers only.' });
+        }
+        if (!/^[a-zA-Z\s\u0600-\u06FF]+$/.test(adminName.trim())) {
+            return res.status(400).json({ message: 'Admin name must contain text only (letters and spaces).' });
+        }
+        const customEmailRegex = /^[a-zA-Z]{3}[a-zA-Z0-9]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!customEmailRegex.test(adminEmail.trim())) {
+            return res.status(400).json({ message: "Admin email 3 xaraf ee ugu horeya waa in ay yihiin text, waxana lasoo raacin karaa kaliya text iyo number (e.g. abc123@domain.com)." });
+        }
+
         // create faculty first
-        const faculty = await Faculty.create({ name, code });
+        const faculty = await Faculty.create({ name: name.trim(), code: code.trim().toUpperCase() });
 
         // create faculty admin account
         const admin = await Admin.create({
-            name: adminName,
-            email: adminEmail,
+            name: adminName.trim(),
+            email: adminEmail.trim().toLowerCase(),
             password: adminPassword,
             role: 'admin',
             facultyId: faculty._id
@@ -82,6 +93,17 @@ router.put('/:id', verifyToken, requireSuperAdmin, async (req, res) => {
 
         if (!name || !code || !adminName || !adminEmail) {
             return res.status(400).json({ message: 'Name, code, and admin identity are required.' });
+        }
+
+        if (!/^[a-zA-Z0-9]+$/.test(String(code).trim())) {
+            return res.status(400).json({ message: 'Faculty code must contain letters and numbers only.' });
+        }
+        if (!/^[a-zA-Z\s\u0600-\u06FF]+$/.test(String(adminName).trim())) {
+            return res.status(400).json({ message: 'Admin name must contain text only (letters and spaces).' });
+        }
+        const customEmailRegex = /^[a-zA-Z]{3}[a-zA-Z0-9]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!customEmailRegex.test(String(adminEmail).trim())) {
+            return res.status(400).json({ message: "Admin email 3 xaraf ee ugu horeya waa in ay yihiin text, waxana lasoo raacin karaa kaliya text iyo number (e.g. abc123@domain.com)." });
         }
 
         const faculty = await Faculty.findById(req.params.id).populate('adminId');

@@ -2,6 +2,9 @@ const express = require('express');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const multer = require('multer');
+const xlsx = require('xlsx');
+const mammoth = require('mammoth');
+const { PDFParse } = require('pdf-parse');
 const { verifyToken, requireAdmin, requireStudent, requireAdminOrTeacher } = require('../middleware/auth');
 const Exam = require('../models/Exam');
 const Section = require('../models/Section');
@@ -1057,8 +1060,10 @@ router.post('/students/import-file', verifyToken, requireAdmin, upload.single('f
             originalName.endsWith('.pdf')
         ) {
             // ---- PDF ----
-            const result = await pdfParse(req.file.buffer);
-            const rows = textToRows(result.text);
+            const parser = new PDFParse({ data: req.file.buffer });
+            const pdfRes = await parser.getText();
+            if (typeof parser.destroy === 'function') await parser.destroy();
+            const rows = textToRows(pdfRes?.text || '');
             parsedStudents = rowsToStudents(rows);
 
         } else {
@@ -1157,6 +1162,10 @@ router.post('/students', verifyToken, requireAdmin, async (req, res) => {
         const facultyId = req.user.role === 'admin' ? req.user.facultyId : (bodyFacultyId || req.user.facultyId);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
+        if (!name || !/^[a-zA-Z\s\u0600-\u06FF]+$/.test(name.trim())) {
+            return res.status(400).json({ message: 'Student name must contain text only (letters and spaces).' });
+        }
+
         // optional class validation happens in classRoutes but ensure class belongs to faculty if provided
         if (classId) {
             const Classroom = require('../models/Classroom');
@@ -1164,7 +1173,7 @@ router.post('/students', verifyToken, requireAdmin, async (req, res) => {
             if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
         }
 
-        const student = await Student.create({ name, studentId, email, facultyId, classId: classId || null });
+        const student = await Student.create({ name: name.trim(), studentId, email, facultyId, classId: classId || null });
         res.status(201).json(student);
     } catch (error) {
         if (error.code === 11000) {
@@ -1180,6 +1189,10 @@ router.put('/students/:studentId', verifyToken, requireAdmin, async (req, res) =
         const facultyId = req.user.role === 'admin' ? req.user.facultyId : (bodyFacultyId || req.user.facultyId);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
+        if (name && !/^[a-zA-Z\s\u0600-\u06FF]+$/.test(name.trim())) {
+            return res.status(400).json({ message: 'Student name must contain text only (letters and spaces).' });
+        }
+
         if (classId) {
             const Classroom = require('../models/Classroom');
             const klass = await Classroom.findOne({ _id: classId, facultyId });
@@ -1188,7 +1201,7 @@ router.put('/students/:studentId', verifyToken, requireAdmin, async (req, res) =
 
         const student = await Student.findOneAndUpdate(
             { studentId: req.params.studentId, facultyId },
-            { name, email, accessibilitySettings, classId: classId || null },
+            { ...(name && { name: name.trim() }), email, accessibilitySettings, classId: classId || null },
             { new: true }
         );
         if (!student) return res.status(404).json({ message: 'Student not found.' });

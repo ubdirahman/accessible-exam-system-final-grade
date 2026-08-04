@@ -4,7 +4,7 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
+import { textOnly, isTextOnly, textAndNumberOnly, isTextAndNumberOnly, isValidCustomEmail } from '../utils/validators';
 
 const INITIAL_FORM = {
     name: '',
@@ -50,12 +50,33 @@ export default function AdminFaculties() {
         setTouched({});
     };
 
-    const requiredFields = ['name', 'code', 'adminName', 'adminEmail'];
-    const isFieldEmpty = (field) => !form[field]?.trim();
-    const hasErrors = requiredFields.some(isFieldEmpty) || (!editingId && !form.adminPassword?.trim());
+    const getFieldError = (field) => {
+        if (field === 'name' && !form.name?.trim()) return 'Faculty Name is required';
+        if (field === 'code') {
+            if (!form.code?.trim()) return 'Faculty Code is required';
+            if (!isTextAndNumberOnly(form.code)) return 'Faculty Code must contain letters and numbers only';
+        }
+        if (field === 'adminName') {
+            if (!form.adminName?.trim()) return 'Admin Name is required';
+            if (!isTextOnly(form.adminName)) return 'Admin Name must contain text only (letters and spaces)';
+        }
+        if (field === 'adminEmail') {
+            if (!form.adminEmail?.trim()) return 'Admin Email is required';
+            if (!isValidCustomEmail(form.adminEmail)) return 'Admin Email 3 xaraf ee ugu horeya waa in ay yihiin text, waxana lasoo raacin karaa kaliya text iyo number (e.g. abc123@domain.com)';
+        }
+        if (field === 'adminPassword' && !editingId && !form.adminPassword?.trim()) return 'Admin Password is required';
+        return '';
+    };
 
     const handleBlur = (field) => setTouched(prev => ({ ...prev, [field]: true }));
-    const showError = (field) => touched[field] && isFieldEmpty(field);
+    const showError = (field) => touched[field] && getFieldError(field);
+    const hasErrors = Boolean(
+        getFieldError('name') ||
+        getFieldError('code') ||
+        getFieldError('adminName') ||
+        getFieldError('adminEmail') ||
+        (!editingId && getFieldError('adminPassword'))
+    );
 
     const createFaculty = async (e) => {
         e.preventDefault();
@@ -88,7 +109,7 @@ export default function AdminFaculties() {
     const updateFaculty = async (e) => {
         e.preventDefault();
         setTouched({ name: true, code: true, adminName: true, adminEmail: true });
-        if (requiredFields.some(isFieldEmpty)) return;
+        if (hasErrors) return;
         setError('');
         try {
             await api.put(`/faculties/${editingId}`, form);
@@ -189,33 +210,33 @@ export default function AdminFaculties() {
                             <input
                                 className={`input${showError('name') ? ' input-error' : ''}`}
                                 value={form.name}
-                                onChange={e => setForm({ ...form, name: nameOnly(e.target.value) })}
+                                onChange={e => setForm({ ...form, name: e.target.value })}
                                 onBlur={() => handleBlur('name')}
                                 placeholder="e.g. Computer Science"
                             />
-                            {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('name')}</span>}
                         </div>
                         <div className="input-group">
-                            <label>Code</label>
+                            <label>Code (Text and numbers only)</label>
                             <input
                                 className={`input${showError('code') ? ' input-error' : ''}`}
                                 value={form.code}
-                                onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })}
+                                onChange={e => setForm({ ...form, code: textAndNumberOnly(e.target.value) })}
                                 onBlur={() => handleBlur('code')}
                                 placeholder="e.g. CS"
                             />
-                            {showError('code') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('code') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('code')}</span>}
                         </div>
                         <div className="input-group">
-                            <label>Admin Name</label>
+                            <label>Admin Name (Text only)</label>
                             <input
                                 className={`input${showError('adminName') ? ' input-error' : ''}`}
                                 value={form.adminName}
-                                onChange={e => setForm({ ...form, adminName: nameOnly(e.target.value) })}
+                                onChange={e => setForm({ ...form, adminName: textOnly(e.target.value) })}
                                 onBlur={() => handleBlur('adminName')}
                                 placeholder="e.g. Ahmed Ali"
                             />
-                            {showError('adminName') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('adminName') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('adminName')}</span>}
                         </div>
                         <div className="input-group">
                             <label>Admin Email</label>
@@ -225,14 +246,14 @@ export default function AdminFaculties() {
                                 value={form.adminEmail}
                                 onChange={e => setForm({ ...form, adminEmail: e.target.value })}
                                 onBlur={() => handleBlur('adminEmail')}
-                                placeholder="admin@faculty.edu"
+                                placeholder="e.g. abc123@faculty.edu"
                             />
-                            {showError('adminEmail') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('adminEmail') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('adminEmail')}</span>}
                         </div>
                         <div className="input-group">
                             <label>{isEditing ? 'New Admin Password' : 'Admin Password'}</label>
                             <input
-                                className={`input${!isEditing && touched.adminPassword && !form.adminPassword?.trim() ? ' input-error' : ''}`}
+                                className={`input${showError('adminPassword') ? ' input-error' : ''}`}
                                 type="password"
                                 value={form.adminPassword}
                                 onChange={e => setForm({ ...form, adminPassword: e.target.value })}
@@ -240,8 +261,8 @@ export default function AdminFaculties() {
                                 required={!isEditing}
                                 placeholder={isEditing ? 'Leave blank to keep current password' : 'Enter password'}
                             />
-                            {!isEditing && touched.adminPassword && !form.adminPassword?.trim() && (
-                                <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>
+                            {showError('adminPassword') && (
+                                <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('adminPassword')}</span>
                             )}
                         </div>
                         <button className="btn btn-primary" type="submit" style={{ alignSelf: 'end' }}>

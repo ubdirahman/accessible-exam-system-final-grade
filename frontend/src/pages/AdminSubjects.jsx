@@ -5,8 +5,7 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali), numbers, and spaces in name fields
-const nameOnly = (val) => val.replace(/[^a-zA-Z0-9\s\u0600-\u06FF\-']/g, '');
+import { textOnly, isTextOnly, textAndNumberOnly, isTextAndNumberOnly } from '../utils/validators';
 
 export default function AdminSubjects() {
     const { user } = useAuth();
@@ -83,17 +82,31 @@ export default function AdminSubjects() {
     }, [selectedFaculty, user?.facultyId, isSuper]);
 
     // Form validation
-    const formErrors = {
-        name: !form.name?.trim(),
-        classId: !form.classId?.trim(),
-        teacherId: !form.teacherId?.trim()
+    const getFieldError = (field) => {
+        if (field === 'name') {
+            if (!form.name?.trim()) return 'Subject Name is required';
+            if (!isTextOnly(form.name)) return 'Subject Name must contain text only (letters and spaces)';
+        }
+        if (field === 'code' && form.code?.trim()) {
+            if (!isTextAndNumberOnly(form.code)) return 'Subject Code must contain letters and numbers only';
+        }
+        if (field === 'classId' && !form.classId?.trim()) return 'Class selection is required';
+        if (field === 'teacherId' && !form.teacherId?.trim()) return 'Teacher selection is required';
+        return '';
     };
-    const showError = (field) => touched[field] && formErrors[field];
+
+    const showError = (field) => touched[field] && getFieldError(field);
+    const hasErrors = Boolean(
+        getFieldError('name') ||
+        (form.code?.trim() && getFieldError('code')) ||
+        getFieldError('classId') ||
+        getFieldError('teacherId')
+    );
 
     const createSubject = async (e) => {
         e.preventDefault();
-        setTouched({ name: true, classId: true, teacherId: true });
-        if (Object.values(formErrors).some(Boolean)) return;
+        setTouched({ name: true, code: true, classId: true, teacherId: true });
+        if (hasErrors) return;
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         if (!facultyId) return setError('Select a faculty first.');
         try {
@@ -101,6 +114,7 @@ export default function AdminSubjects() {
             setForm({ name: '', code: '', classId: '', teacherId: '' });
             setShowAddForm(false);
             setTouched({});
+            setError('');
             loadSubjects(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to create subject');
@@ -138,11 +152,19 @@ export default function AdminSubjects() {
     };
 
     const saveEdit = async () => {
-        if (!editForm.name?.trim()) return;
+        if (!editForm.name?.trim() || !isTextOnly(editForm.name)) {
+            setError('Subject Name must contain text only.');
+            return;
+        }
+        if (editForm.code?.trim() && !isTextAndNumberOnly(editForm.code)) {
+            setError('Subject Code must contain letters and numbers only.');
+            return;
+        }
         const facultyId = isSuper ? selectedFaculty : user?.facultyId;
         try {
             await api.put(`/subjects/${editingId}`, { ...editForm, facultyId });
             setEditingId(null);
+            setError('');
             loadSubjects(facultyId);
         } catch (err) {
             setError(err.response?.data?.message || 'Failed to save subject');
@@ -160,7 +182,7 @@ export default function AdminSubjects() {
                 <h1 style={{ fontWeight: 800 }}>Subjects</h1>
                 <button
                     className={`btn ${showAddForm ? 'btn-secondary' : 'btn-primary'}`}
-                    onClick={() => { setShowAddForm(!showAddForm); setTouched({}); }}
+                    onClick={() => { setShowAddForm(!showAddForm); setTouched({}); setError(''); }}
                 >
                     {showAddForm ? (
                         <><i className="fa-solid fa-xmark" aria-hidden="true" /> Cancel</>
@@ -185,19 +207,26 @@ export default function AdminSubjects() {
                     <h3 className="mb-sm">Add New Subject</h3>
                     <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }} onSubmit={createSubject}>
                         <div className="input-group">
-                            <label>Subject Name</label>
+                            <label>Subject Name (Text only)</label>
                             <input
                                 className={`input${showError('name') ? ' input-error' : ''}`}
                                 value={form.name}
-                                onChange={e => setForm({ ...form, name: nameOnly(e.target.value) })}
+                                onChange={e => setForm({ ...form, name: textOnly(e.target.value) })}
                                 onBlur={() => setTouched(p => ({ ...p, name: true }))}
                                 placeholder="e.g. Mathematics"
                             />
-                            {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('name')}</span>}
                         </div>
                         <div className="input-group">
-                            <label>Code</label>
-                            <input className="input" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="e.g. MATH101" />
+                            <label>Code (Text and numbers only)</label>
+                            <input
+                                className={`input${showError('code') ? ' input-error' : ''}`}
+                                value={form.code}
+                                onChange={e => setForm({ ...form, code: textAndNumberOnly(e.target.value) })}
+                                onBlur={() => setTouched(p => ({ ...p, code: true }))}
+                                placeholder="e.g. MATH101"
+                            />
+                            {showError('code') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('code')}</span>}
                         </div>
                         <div className="input-group">
                             <label>Class</label>
@@ -210,7 +239,7 @@ export default function AdminSubjects() {
                                 <option value="">Select class</option>
                                 {classes.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
                             </select>
-                            {showError('classId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('classId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('classId')}</span>}
                         </div>
                         <div className="input-group">
                             <label>Teacher</label>
@@ -223,7 +252,7 @@ export default function AdminSubjects() {
                                 <option value="">Select teacher</option>
                                 {teachers.filter(t => (t.classId?._id || t.classId) === form.classId).map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
                             </select>
-                            {showError('teacherId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                            {showError('teacherId') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('teacherId')}</span>}
                         </div>
                         <button className="btn btn-primary" type="submit" style={{ alignSelf: 'end' }}>Add New Subject</button>
                     </form>
@@ -262,14 +291,15 @@ export default function AdminSubjects() {
                                     <tr key={s._id}>
                                         <td style={{ fontWeight: 600 }}>
                                             {editingId === s._id
-                                                ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: nameOnly(e.target.value) })} />
+                                                ? <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: textOnly(e.target.value) })} />
                                                 : s.name}
                                         </td>
                                         <td>
                                             {editingId === s._id
-                                                ? <input className="input" value={editForm.code} onChange={e => setEditForm({ ...editForm, code: e.target.value })} />
+                                                ? <input className="input" value={editForm.code} onChange={e => setEditForm({ ...editForm, code: textAndNumberOnly(e.target.value) })} />
                                                 : (s.code || '—')}
                                         </td>
+
                                         <td>
                                             {editingId === s._id
                                                 ? (

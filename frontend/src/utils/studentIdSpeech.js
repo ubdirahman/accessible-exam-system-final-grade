@@ -25,26 +25,27 @@ const DIGIT_WORDS = {
     // ── 0 ──
     'zero': '0', 'oh': '0', 'o': '0', 'ooh': '0', 'oo': '0',
     'eber': '0', 'aber': '0', 'abir': '0', 'iber': '0', 'ever': '0',
-    'eeber': '0', 'iber': '0',
+    'eeber': '0', 'nil': '0', 'nul': '0', 'null': '0',
 
     // ── 1 ──
     'one': '1', 'won': '1', 'wan': '1', 'wun': '1', 'un': '1',
     'kow': '1', 'koow': '1', 'kowow': '1', 'koo': '1', 'ku': '1',
     'hal': '1', 'haal': '1', 'cow': '1', 'ko': '1', 'kowaad': '1',
+    'first': '1', '1st': '1',
 
     // ── 2 ──
     'two': '2', 'to': '2', 'too': '2', 'tu': '2', 'tuu': '2',
     'laba': '2', 'labo': '2', 'labba': '2', 'labbo': '2', 'laabo': '2',
-    'laab': '2', 'labaad': '2',
+    'laab': '2', 'labaad': '2', 'second': '2', '2nd': '2',
 
     // ── 3 ──
-    'three': '3', 'tree': '3', 'tri': '3', 'free': '3',
+    'three': '3', 'tree': '3', 'tri': '3', 'free': '3', 'thre': '3',
     'saddex': '3', 'sadex': '3', 'seddex': '3', 'sedex': '3',
     'sadax': '3', 'seddax': '3', 'sadec': '3', 'sadik': '3',
     'saddec': '3', 'saadex': '3', 'saddexaad': '3', 'sadexaad': '3',
 
     // ── 4 ──
-    'four': '4', 'for': '4', 'fore': '4', 'fur': '4',
+    'four': '4', 'for': '4', 'fore': '4', 'fur': '4', 'foor': '4',
     'afar': '4', 'affar': '4', 'offer': '4', 'afaar': '4',
     'afarr': '4', 'afer': '4', 'afaraad': '4',
 
@@ -70,13 +71,15 @@ const DIGIT_WORDS = {
     'siid': '8', 'sideedaad': '8',
 
     // ── 9 ──
-    'nine': '9', 'nein': '9', 'nin': '9',
+    'nine': '9', 'nein': '9', 'nin': '9', 'nain': '9',
     'sagaal': '9', 'sagal': '9', 'sagael': '9', 'sagaall': '9',
     'sagaale': '9', 'sagaalaad': '9',
 
     // ── Tens & Hundreds ──
     'ten': '10', 'toban': '10', 'tobon': '10',
-    'eleven': '11', 'twelve': '12',
+    'eleven': '11', 'twelve': '12', 'thirteen': '13', 'fourteen': '14',
+    'fifteen': '15', 'sixteen': '16', 'seventeen': '17', 'eighteen': '18',
+    'nineteen': '19',
     'twenty': '20', 'labaatan': '20', 'labatan': '20',
     'thirty': '30', 'saddexdan': '30', 'sadexdan': '30', 'seddexdan': '30',
     'forty': '40', 'afartan': '40', 'afardaan': '40',
@@ -98,9 +101,12 @@ const LETTER_WORDS = {
     'a': 'A', 'ay': 'A', 'ei': 'A', 'alpha': 'A', 'alef': 'A', 'alif': 'A',
     // B
     'b': 'B', 'bee': 'B', 'bi': 'B', 'bravo': 'B', 'be': 'B',
-    // C
+    // C — Somali "C" (ع) sounds like a voiced pharyngeal. Chrome may return:
+    //     "I", "eye", "ah", "a", "ha", or even garbled words.
+    //     We also handle standard English pronunciations.
     'c': 'C', 'cee': 'C', 'si': 'C', 'sii': 'C', 'ci': 'C',
     'see': 'C', 'sea': 'C', 'she': 'C', 'shi': 'C', 'charlie': 'C',
+    'ce': 'C', 'cie': 'C', 'sei': 'C',
     // D
     'd': 'D', 'dee': 'D', 'di': 'D', 'delta': 'D', 'de': 'D',
     // E
@@ -196,7 +202,52 @@ const PHRASE_REPLACEMENTS = [
     [/\bdee\b/gi, 'd'],
     [/\bkay\b/gi, 'k'],
     [/\bjay\b/gi, 'j'],
-    [/\bwhy\b/gi, 'y']
+    [/\bwhy\b/gi, 'y'],
+    // Chrome may return compound numbers — split them into individual digits
+    // e.g. "c 1220199" spoken fast → Chrome returns "c1220199" or "see 1220199"
+    // e.g. "twenty two" → we want "2" "2" not "22" as a block
+    [/\btwenty\s*one\b/gi, 'two one'],
+    [/\btwenty\s*two\b/gi, 'two two'],
+    [/\btwenty\s*three\b/gi, 'two three'],
+    [/\btwenty\s*four\b/gi, 'two four'],
+    [/\btwenty\s*five\b/gi, 'two five'],
+    [/\btwenty\s*six\b/gi, 'two six'],
+    [/\btwenty\s*seven\b/gi, 'two seven'],
+    [/\btwenty\s*eight\b/gi, 'two eight'],
+    [/\btwenty\s*nine\b/gi, 'two nine'],
+    [/\bninety\s*one\b/gi, 'nine one'],
+    [/\bninety\s*two\b/gi, 'nine two'],
+    [/\bninety\s*three\b/gi, 'nine three'],
+    [/\bninety\s*four\b/gi, 'nine four'],
+    [/\bninety\s*five\b/gi, 'nine five'],
+    [/\bninety\s*six\b/gi, 'nine six'],
+    [/\bninety\s*seven\b/gi, 'nine seven'],
+    [/\bninety\s*eight\b/gi, 'nine eight'],
+    [/\bninety\s*nine\b/gi, 'nine nine'],
+    [/\bthirty\s*one\b/gi, 'three one'],
+    [/\bthirty\s*two\b/gi, 'three two'],
+    [/\bthirty\s*three\b/gi, 'three three'],
+    [/\bforty\s*one\b/gi, 'four one'],
+    [/\bforty\s*two\b/gi, 'four two'],
+    [/\bfifty\s*one\b/gi, 'five one'],
+    [/\bfifty\s*two\b/gi, 'five two'],
+    [/\bsixty\s*one\b/gi, 'six one'],
+    [/\bsixty\s*two\b/gi, 'six two'],
+    [/\bseventy\s*one\b/gi, 'seven one'],
+    [/\bseventy\s*two\b/gi, 'seven two'],
+    [/\beighty\s*one\b/gi, 'eight one'],
+    [/\beighty\s*two\b/gi, 'eight two'],
+    // Handle "double" patterns: "double one" → "one one", "double nine" → "nine nine"
+    [/\bdouble\s+zero\b/gi, 'zero zero'],
+    [/\bdouble\s+one\b/gi, 'one one'],
+    [/\bdouble\s+two\b/gi, 'two two'],
+    [/\bdouble\s+three\b/gi, 'three three'],
+    [/\bdouble\s+four\b/gi, 'four four'],
+    [/\bdouble\s+five\b/gi, 'five five'],
+    [/\bdouble\s+six\b/gi, 'six six'],
+    [/\bdouble\s+seven\b/gi, 'seven seven'],
+    [/\bdouble\s+eight\b/gi, 'eight eight'],
+    [/\bdouble\s+nine\b/gi, 'nine nine']
 ];
 
 // ─────────────────────────────────────────────
@@ -244,6 +295,30 @@ function isDigitLikeToken(token = '') {
 }
 
 // ─────────────────────────────────────────────
+// Try to split a compact alphanumeric token like "c1220199"
+// into letter prefix + digit characters: ['C','1','2','2','0','1','9','9']
+// ─────────────────────────────────────────────
+function splitCompactIdToken(token = '') {
+    // Match pattern: optional letter prefix + digits (e.g. "c1220199", "1220199", "a12345")
+    const match = token.match(/^([a-z]?)(\d+)$/i);
+    if (!match) return null;
+
+    const [, letterPart, digitPart] = match;
+    const result = [];
+
+    if (letterPart) {
+        result.push(letterPart.toUpperCase());
+    }
+
+    // Split digits individually for student ID
+    for (const d of digitPart) {
+        result.push(d);
+    }
+
+    return result.length > 0 ? result : null;
+}
+
+// ─────────────────────────────────────────────
 // Convert a single spoken token to an ID character
 // Priority: digit → letter → raw single char
 // ─────────────────────────────────────────────
@@ -264,14 +339,17 @@ function tokenToIdChunk(token = '', index = 0, tokens = [], hasCue = false) {
     // Letter word
     if (LETTER_WORDS[token] !== undefined) return LETTER_WORDS[token];
 
-    // Raw numeric string (e.g. "123")
+    // Raw numeric string (e.g. "123") — split into individual digits
     if (/^\d+$/.test(token)) return token;
 
     // Single alphabetic character
     if (/^[a-z]$/.test(token)) return token.toUpperCase();
 
-    // Alphanumeric compact ID chunk, e.g. "c12201" spoken as one word
+    // Alphanumeric compact ID chunk, e.g. "c1220199" spoken as one word
+    // Split into individual characters for proper student ID format
     if (/^[a-z0-9]+$/.test(token) && /\d/.test(token) && /[a-z]/i.test(token)) {
+        const split = splitCompactIdToken(token);
+        if (split) return split.join('');
         return token.toUpperCase();
     }
 
@@ -301,6 +379,13 @@ export function extractStudentIdChunks(input = '') {
         .filter(Boolean);
 
     if (tokens.length === 0) return [];
+
+    // If we have a single token that looks like a complete student ID (e.g. "c1220199"),
+    // split it directly into characters for best accuracy
+    if (tokens.length === 1) {
+        const compact = splitCompactIdToken(tokens[0]);
+        if (compact && compact.length >= 4) return compact;
+    }
 
     return tokens
         .map((token, index) => tokenToIdChunk(token, index, tokens, hasCue))

@@ -5,8 +5,7 @@ import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
 
-// Only allow letters (Latin + Arabic/Somali) and spaces in name fields
-const nameOnly = (val) => val.replace(/[^a-zA-Z\s\u0600-\u06FF\-']/g, '');
+import { textOnly, isTextOnly, numberOnly, isNumberOnly, isValidCustomEmail } from '../utils/validators';
 
 export default function AdminTeachers() {
     const { user } = useAuth();
@@ -79,14 +78,27 @@ export default function AdminTeachers() {
     }, [selectedClass]);
 
     // Form validation
-    const formErrors = {
-        name: !form.name?.trim(),
-        email: !form.email?.trim(),
-        phone: !form.phone?.trim(),
-        password: !form.password?.trim()
+    const getFieldError = (field) => {
+        if (field === 'name') {
+            if (!form.name?.trim()) return 'Full Name is required';
+            if (!isTextOnly(form.name)) return 'Full Name must contain text only (letters and spaces)';
+        }
+        if (field === 'phone') {
+            if (!form.phone?.trim()) return 'Phone number is required';
+            if (!isNumberOnly(form.phone)) return 'Phone number must contain numbers only';
+        }
+        if (field === 'email') {
+            if (!form.email?.trim()) return 'Email address is required';
+            if (!isValidCustomEmail(form.email)) return 'Email 3 xaraf ee ugu horeya waa in ay yihiin text, waxana lasoo raacin karaa kaliya text iyo number (e.g. abc123@domain.com)';
+        }
+        if (field === 'password') {
+            if (!form.password?.trim()) return 'Password is required';
+        }
+        return '';
     };
-    const showError = (field) => touched[field] && formErrors[field];
-    const hasErrors = Object.values(formErrors).some(Boolean);
+
+    const showError = (field) => touched[field] && getFieldError(field);
+    const hasErrors = Boolean(getFieldError('name') || getFieldError('phone') || getFieldError('email') || getFieldError('password'));
 
     const addTeacher = async (e) => {
         e.preventDefault();
@@ -132,11 +144,19 @@ export default function AdminTeachers() {
     };
 
     const saveEdit = async () => {
-        if (!editForm.name?.trim()) return;
+        if (!editForm.name?.trim() || !isTextOnly(editForm.name)) {
+            setError('Teacher name must contain text only.');
+            return;
+        }
+        if (!editForm.phone?.trim() || !isNumberOnly(editForm.phone)) {
+            setError('Teacher phone must contain numbers only.');
+            return;
+        }
         try {
             const facultyId = isSuper ? selectedFaculty : user?.facultyId;
             await api.put(`/teachers/${editingId}`, { ...editForm, facultyId });
             setEditingId(null);
+            setError('');
             loadTeachers(selectedClass._id);
         } catch (err) {
             setError(err.response?.data?.message || 'Error saving teacher.');
@@ -173,15 +193,15 @@ export default function AdminTeachers() {
                         <h3 className="mb-sm">Register New Teacher</h3>
                         <form className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }} onSubmit={addTeacher}>
                             <div className="input-group">
-                                <label>Full Name</label>
+                                <label>Full Name (Text only)</label>
                                 <input
                                     className={`input${showError('name') ? ' input-error' : ''}`}
                                     value={form.name}
-                                    onChange={e => setForm({ ...form, name: nameOnly(e.target.value) })}
+                                    onChange={e => setForm({ ...form, name: textOnly(e.target.value) })}
                                     onBlur={() => setTouched(p => ({ ...p, name: true }))}
                                     placeholder="e.g. Ahmed Ali"
                                 />
-                                {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                                {showError('name') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('name')}</span>}
                             </div>
                             <div className="input-group">
                                 <label>Email Address</label>
@@ -191,20 +211,20 @@ export default function AdminTeachers() {
                                     value={form.email}
                                     onChange={e => setForm({ ...form, email: e.target.value })}
                                     onBlur={() => setTouched(p => ({ ...p, email: true }))}
-                                    placeholder="teacher@faculty.edu"
+                                    placeholder="e.g. abc123@faculty.edu"
                                 />
-                                {showError('email') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                                {showError('email') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('email')}</span>}
                             </div>
                             <div className="input-group">
-                                <label>Phone Number</label>
+                                <label>Phone Number (Numbers only)</label>
                                 <input
                                     className={`input${showError('phone') ? ' input-error' : ''}`}
                                     value={form.phone}
-                                    onChange={e => setForm({ ...form, phone: e.target.value })}
+                                    onChange={e => setForm({ ...form, phone: numberOnly(e.target.value) })}
                                     onBlur={() => setTouched(p => ({ ...p, phone: true }))}
-                                    placeholder="e.g. +252 61 234 5678"
+                                    placeholder="e.g. 612345678"
                                 />
-                                {showError('phone') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                                {showError('phone') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('phone')}</span>}
                             </div>
                             <div className="input-group">
                                 <label>Password</label>
@@ -216,7 +236,7 @@ export default function AdminTeachers() {
                                     onBlur={() => setTouched(p => ({ ...p, password: true }))}
                                     placeholder="Set login password"
                                 />
-                                {showError('password') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> Required</span>}
+                                {showError('password') && <span className="input-error-text"><i className="fa-solid fa-circle-exclamation" /> {getFieldError('password')}</span>}
                             </div>
                             <div className="input-group">
                                 <label>Residential Address</label>
@@ -254,7 +274,7 @@ export default function AdminTeachers() {
                                         <tr key={t._id}>
                                             <td>
                                                 {editingId === t._id ? (
-                                                    <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: nameOnly(e.target.value) })} />
+                                                    <input className="input" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: textOnly(e.target.value) })} />
                                                 ) : (
                                                     <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</div>
                                                 )}
@@ -263,7 +283,7 @@ export default function AdminTeachers() {
                                             <td>
                                                 <div>{t.email}</div>
                                                 {editingId === t._id ? (
-                                                    <input className="input" style={{ marginTop: 4 }} value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+                                                    <input className="input" style={{ marginTop: 4 }} value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: numberOnly(e.target.value) })} />
                                                 ) : (
                                                     <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{t.phone}</div>
                                                 )}

@@ -49,7 +49,12 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
         const { name, code, classId, teacherId } = req.body;
-        if (!name) return res.status(400).json({ message: 'Subject name is required.' });
+        if (!name || !/^[a-zA-Z\s\u0600-\u06FF]+$/.test(name.trim())) {
+            return res.status(400).json({ message: 'Subject name must contain text only (letters and spaces).' });
+        }
+        if (code && !/^[a-zA-Z0-9]+$/.test(code.trim())) {
+            return res.status(400).json({ message: 'Subject code must contain letters and numbers only.' });
+        }
 
         // Optional: ensure class belongs to same faculty
         if (classId) {
@@ -62,8 +67,8 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
         }
 
         const subject = await Subject.create({
-            name,
-            code,
+            name: name.trim(),
+            code: code ? code.trim().toUpperCase() : '',
             classId: classId || null,
             teacherId: teacherId || null,
             facultyId,
@@ -87,6 +92,13 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
         const { name, code, classId, teacherId } = req.body;
+        if (name && !/^[a-zA-Z\s\u0600-\u06FF]+$/.test(name.trim())) {
+            return res.status(400).json({ message: 'Subject name must contain text only (letters and spaces).' });
+        }
+        if (code && !/^[a-zA-Z0-9]+$/.test(code.trim())) {
+            return res.status(400).json({ message: 'Subject code must contain letters and numbers only.' });
+        }
+
         if (classId) {
             const klass = await Classroom.findOne({ _id: classId, facultyId });
             if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
@@ -96,7 +108,12 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
             if (!teacher) return res.status(400).json({ message: 'Teacher not found for this faculty.' });
         }
 
-        const updates = { name, code, classId: classId || null, teacherId: teacherId || null };
+        const updates = {
+            ...(name && { name: name.trim() }),
+            ...(code !== undefined && { code: code ? code.trim().toUpperCase() : '' }),
+            classId: classId || null,
+            teacherId: teacherId || null
+        };
         const subject = await Subject.findOneAndUpdate(
             { _id: req.params.id, facultyId },
             updates,

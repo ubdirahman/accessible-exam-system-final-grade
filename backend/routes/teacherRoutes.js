@@ -29,6 +29,17 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
             return res.status(400).json({ message: 'facultyId is required.' });
         }
 
+        if (!name || !/^[a-zA-Z\s\u0600-\u06FF]+$/.test(name.trim())) {
+            return res.status(400).json({ message: 'Teacher name must contain text only (letters and spaces).' });
+        }
+        if (!phone || !/^[0-9]+$/.test(phone.trim())) {
+            return res.status(400).json({ message: 'Phone number must contain numbers only.' });
+        }
+        const customEmailRegex = /^[a-zA-Z]{3}[a-zA-Z0-9]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!email || !customEmailRegex.test(email.trim())) {
+            return res.status(400).json({ message: "Email 3 xaraf ee ugu horeya waa in ay yihiin text, waxana lasoo raacin karaa kaliya text iyo number (e.g. abc123@domain.com)." });
+        }
+
         if (classId) {
             const Classroom = require('../models/Classroom');
             const klass = await Classroom.findOne({ _id: classId, facultyId });
@@ -51,7 +62,14 @@ router.put('/:id', verifyToken, requireAdmin, async (req, res) => {
     try {
         const facultyId = req.user.role === 'admin' ? req.user.facultyId : (req.body.facultyId || req.user.facultyId);
         if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
-        const { classId } = req.body;
+        const { name, phone, classId } = req.body;
+
+        if (name && !/^[a-zA-Z\s\u0600-\u06FF]+$/.test(name.trim())) {
+            return res.status(400).json({ message: 'Teacher name must contain text only (letters and spaces).' });
+        }
+        if (phone && !/^[0-9]+$/.test(phone.trim())) {
+            return res.status(400).json({ message: 'Phone number must contain numbers only.' });
+        }
 
         if (classId) {
             const Classroom = require('../models/Classroom');
