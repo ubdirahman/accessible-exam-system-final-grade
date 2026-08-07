@@ -879,14 +879,6 @@ export default function LoginPage() {
                         <i className="fa-solid fa-shield-halved" aria-hidden="true"></i>
                         Admin
                     </button>
-                    <button
-                        type="button"
-                        className={mode === 'teacher' ? 'active' : ''}
-                        onClick={() => switchMode('teacher')}
-                    >
-                        <i className="fa-solid fa-user-tie" aria-hidden="true"></i>
-                        Teacher
-                    </button>
                 </nav>
 
                 <section className="modern-login-grid">
