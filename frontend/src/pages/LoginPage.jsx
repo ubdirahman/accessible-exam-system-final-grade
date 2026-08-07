@@ -177,28 +177,36 @@ export default function LoginPage() {
 
     const playConfirmationSequence = useCallback((cleanId) => {
         const runId = ++voiceRunRef.current;
-        const { startListening: resumeListening } = listeningControlsRef.current;
+        const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
         const isActiveRun = () => modeRef.current === 'student' && voiceRunRef.current === runId;
 
         stop();
         stopSomaliAudio();
         setAudioPlayingState(true);
-        // Keep listening active so student can say "haa" or "maya" continuously!
-        resumeListening();
+        // Pause microphone listening while prompt audio plays so speaker output isn't picked up
+        pauseListening();
+
+        let ttsCompleted = false;
+        const completeTtsStep = () => {
+            if (ttsCompleted || !isActiveRun()) return;
+            ttsCompleted = true;
+            playSomaliAudioFile(AUDIO_PROMPTS.CONFIRM_YES_NO_PROMPT, () => {
+                if (!isActiveRun()) return;
+                setAudioPlayingState(false);
+                // Turn microphone listening back ON to wait for student's explicit "haa" or "maya"
+                resumeListening();
+            });
+        };
 
         playSomaliAudioFile(AUDIO_PROMPTS.ARE_YOU_SURE_ID, () => {
             if (!isActiveRun()) return;
             speak(spellStudentId(cleanId), {
                 ...ENGLISH_ID_TTS_OPTIONS,
-                onEnd: () => {
-                    if (!isActiveRun()) return;
-                    playSomaliAudioFile(AUDIO_PROMPTS.CONFIRM_YES_NO_PROMPT, () => {
-                        if (!isActiveRun()) return;
-                        setAudioPlayingState(false);
-                        resumeListening();
-                    });
-                }
+                onEnd: completeTtsStep
             });
+
+            // Safety fallback: if TTS takes more than 4 seconds, proceed smoothly
+            setTimeout(completeTtsStep, 4000);
         });
     }, [speak, stop, setAudioPlayingState]);
 

@@ -239,24 +239,22 @@ export default function ExamPage() {
         const runId = ++speechRunRef.current;
         const originalOnEnd = options.onEnd;
 
-        pauseVoiceRecognition();
+        listeningControlsRef.current.startListening();
         stopSomaliAudio();
         ttsActiveRef.current = true;
-        voiceInputReadyAtRef.current = Number.POSITIVE_INFINITY;
+        voiceInputReadyAtRef.current = Date.now();
 
         speak(textInput, {
             ...options,
             onEnd: () => {
                 if (speechRunRef.current !== runId) return;
                 if (originalOnEnd) originalOnEnd();
-                if (speechRunRef.current !== runId) return;
-
                 ttsActiveRef.current = false;
-                voiceInputReadyAtRef.current = Date.now() + SPEECH_INPUT_RESUME_DELAY;
-                resumeVoiceRecognitionSoon();
+                voiceInputReadyAtRef.current = Date.now();
+                listeningControlsRef.current.startListening();
             }
         });
-    }, [pauseVoiceRecognition, resumeVoiceRecognitionSoon, speak]);
+    }, [speak]);
 
     const stopExamSpeech = useCallback(() => {
         speechRunRef.current += 1;
@@ -537,14 +535,10 @@ export default function ExamPage() {
     const selectOption = useCallback((letterOrInput, source = 'manual') => {
         if (!currentQuestion || currentQuestion.type === 'open-ended') return false;
 
-        if (source === 'voice' && (ttsActiveRef.current || Date.now() < voiceInputReadyAtRef.current)) {
-            return false;
-        }
-
         const option = findOptionByInput(letterOrInput);
         if (!option) {
             if (/^[a-d]$/i.test(String(letterOrInput || '').trim())) {
-                announce(`Option ${String(letterOrInput).toUpperCase()} is not available. Please choose a valid option.`, {
+                announce(`Option ${String(letterOrInput).toUpperCase()} is not available.`, {
                     speakMessage: true,
                     assertive: true
                 });
@@ -566,7 +560,7 @@ export default function ExamPage() {
         setShowConfirm(true);
         setWaitingNextConfirm(false);
 
-        announce(`You selected Option ${letter}: ${option.text}. Are you sure you want to select Option ${letter}: ${option.text}? Say YES to confirm, or NO to cancel.`, {
+        announce(`You selected Option ${letter}: ${option.text}. Say YES to confirm, or NO to cancel.`, {
             speakMessage: true,
             assertive: true
         });

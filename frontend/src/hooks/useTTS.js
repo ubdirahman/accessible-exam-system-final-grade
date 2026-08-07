@@ -37,13 +37,17 @@ function findBestMaleVoice(allVoices = [], requestedLang = 'en-US') {
     const pool = langVoices.length ? langVoices : allVoices.filter(v => v.lang.toLowerCase().startsWith('en'));
     const finalPool = pool.length ? pool : allVoices;
 
-    // 1st Priority: Explicit Male named voice that is NOT female
+    // 1st Priority: Offline Local Male voice
+    const localMale = finalPool.find(v => v.localService === true && !isFemaleVoice(v) && MALE_VOICE_KEYWORDS.some(k => v.name.toLowerCase().includes(k)));
+    if (localMale) return localMale;
+
+    // 2nd Priority: Explicit Male named voice that is NOT female
     const explicitMale = finalPool.find(v => !isFemaleVoice(v) && MALE_VOICE_KEYWORDS.some(k => v.name.toLowerCase().includes(k)));
     if (explicitMale) return explicitMale;
 
-    // 2nd Priority: Any voice in pool that is NOT female
-    const nonFemale = finalPool.find(v => !isFemaleVoice(v));
-    if (nonFemale) return nonFemale;
+    // 3rd Priority: Any offline local voice
+    const anyLocal = finalPool.find(v => v.localService === true && !isFemaleVoice(v));
+    if (anyLocal) return anyLocal;
 
     // Fallback
     return finalPool[0] || null;
