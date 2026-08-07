@@ -6,7 +6,8 @@ const KNOWN_ROLES = new Set(['student', 'teacher', 'admin', 'super_admin']);
 export function normalizeRole(role) {
     if (typeof role !== 'string') return '';
 
-    const normalized = role.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    let normalized = role.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    if (normalized === 'superadmin') normalized = 'super_admin';
     return KNOWN_ROLES.has(normalized) ? normalized : '';
 }
 

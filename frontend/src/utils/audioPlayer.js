@@ -7,6 +7,7 @@
 const AUDIO_PROMPTS = {
     PLEASE_ENTER_ID: '/assets/audio/waxad-joogtaa-page-loginka-fadlan-geli-idgaag.mp4',
     ARE_YOU_SURE_ID: '/assets/audio/mahubta-id-ah.mp4',
+    CONFIRM_YES_NO_PROMPT: '/assets/audio/hadii-aad-hubtid-id.mp4',
     YES_NO_CONFIRM: '/assets/audio/haa-maya.mp4',
     WELCOME: '/assets/audio/waxad-joogtaa-dashboardkaaga-sodhawow.mp4',
     START_EXAM_QUESTION: '/assets/audio/waxan-rabaa-inaa-kubiilaabo-examka.mp4'

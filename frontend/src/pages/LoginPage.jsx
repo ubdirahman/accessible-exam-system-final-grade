@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, getDefaultRouteForRole } from '../context/AuthContext';
 import { useExam } from '../context/ExamContext';
 import { useTTS } from '../hooks/useTTS';
 import { useVoiceCommands } from '../hooks/useVoiceCommands';
@@ -176,23 +176,14 @@ export default function LoginPage() {
 
     const playConfirmationSequence = useCallback((cleanId) => {
         const runId = ++voiceRunRef.current;
-        const { startListening: resumeListening, stopListening: pauseListening } = listeningControlsRef.current;
+        const { startListening: resumeListening } = listeningControlsRef.current;
         const isActiveRun = () => modeRef.current === 'student' && voiceRunRef.current === runId;
 
-        pauseListening();
         stop();
         stopSomaliAudio();
         setAudioPlayingState(true);
-
-        const safeResume = () => {
-            if (resumeListeningTimerRef.current) clearTimeout(resumeListeningTimerRef.current);
-            resumeListeningTimerRef.current = setTimeout(() => {
-                resumeListeningTimerRef.current = null;
-                if (isActiveRun()) {
-                    resumeListening();
-                }
-            }, 300);
-        };
+        // Keep listening active so student can say "haa" or "maya" continuously!
+        resumeListening();
 
         playSomaliAudioFile(AUDIO_PROMPTS.ARE_YOU_SURE_ID, () => {
             if (!isActiveRun()) return;
@@ -200,10 +191,10 @@ export default function LoginPage() {
                 ...ENGLISH_ID_TTS_OPTIONS,
                 onEnd: () => {
                     if (!isActiveRun()) return;
-                    playSomaliAudioFile(AUDIO_PROMPTS.YES_NO_CONFIRM, () => {
+                    playSomaliAudioFile(AUDIO_PROMPTS.CONFIRM_YES_NO_PROMPT, () => {
                         if (!isActiveRun()) return;
                         setAudioPlayingState(false);
-                        safeResume();
+                        resumeListening();
                     });
                 }
             });
@@ -545,33 +536,36 @@ export default function LoginPage() {
         promptStudentIdConfirmation(studentId);
     };
 
-    const handleAdminLogin = async (e) => {
+    const handleStaffLogin = async (e) => {
         e.preventDefault();
         setError('');
         setLoading(true);
 
         try {
-            const res = await api.post('/admin-login', { email, password });
-            login(res.data.admin, res.data.token);
-            navigate('/admin/dashboard');
-        } catch (err) {
-            const msg = err.response?.data?.message || 'Login failed.';
-            setError(msg);
-        } finally {
-            setLoading(false);
-        }
-    };
+            let userObj = null;
+            let token = null;
 
-    const handleTeacherLogin = async (e) => {
-        e.preventDefault();
-        setError('');
-        setLoading(true);
-        try {
-            const res = await api.post('/teacher-login', { email, password });
-            login(res.data.teacher, res.data.token);
-            navigate('/teacher/dashboard');
+            try {
+                const res = await api.post('/staff-login', { email, password });
+                userObj = res.data.user || res.data.admin || res.data.teacher;
+                token = res.data.token;
+            } catch (staffErr) {
+                try {
+                    const adminRes = await api.post('/admin-login', { email, password });
+                    userObj = adminRes.data.admin || adminRes.data.user;
+                    token = adminRes.data.token;
+                } catch (adminErr) {
+                    const teacherRes = await api.post('/teacher-login', { email, password });
+                    userObj = teacherRes.data.teacher || teacherRes.data.user;
+                    token = teacherRes.data.token;
+                }
+            }
+
+            login(userObj, token);
+            const targetRoute = getDefaultRouteForRole(userObj.role);
+            navigate(targetRoute || '/admin/dashboard');
         } catch (err) {
-            const msg = err.response?.data?.message || 'Login failed.';
+            const msg = err.response?.data?.message || 'Invalid email or password.';
             setError(msg);
         } finally {
             setLoading(false);
@@ -766,7 +760,7 @@ export default function LoginPage() {
         if (currentId === silenceConfirmedId) return undefined;
 
         const elapsed = Date.now() - lastIdActivityAt;
-        const remaining = Math.max(0, 10000 - elapsed);
+        const remaining = Math.max(0, 3000 - elapsed);
 
         const timeoutId = window.setTimeout(() => {
             const latestId = sanitizeStudentId(studentIdRef.current);
@@ -808,16 +802,16 @@ export default function LoginPage() {
             secureText: 'Voice-guided student access'
         },
         admin: {
-            title: 'Admin Login',
-            subtitle: 'Welcome back! Please sign in to continue.',
+            title: 'Staff & Admin Login',
+            subtitle: 'Super Admin, Admin & Teacher Sign-in using Email & Password.',
             button: 'Login to Dashboard',
-            secureText: 'Secure admin access'
+            secureText: 'Secure staff & admin access'
         },
         teacher: {
-            title: 'Teacher Login',
-            subtitle: 'Welcome back! Please sign in to continue.',
+            title: 'Staff & Admin Login',
+            subtitle: 'Super Admin, Admin & Teacher Sign-in using Email & Password.',
             button: 'Login to Dashboard',
-            secureText: 'Secure teacher access'
+            secureText: 'Secure staff & admin access'
         }
     }[mode];
 
@@ -983,7 +977,7 @@ export default function LoginPage() {
                                 </button>
                             </form>
                         ) : (
-                            <form onSubmit={mode === 'admin' ? handleAdminLogin : handleTeacherLogin} className="modern-login-form">
+                            <form onSubmit={handleStaffLogin} className="modern-login-form">
                                 <label htmlFor="login-email">Email</label>
                                 <div className="modern-input-wrap">
                                     <i className="fa-regular fa-envelope" aria-hidden="true"></i>

@@ -216,4 +216,102 @@ router.post('/teacher-login', async (req, res) => {
     }
 });
 
+// POST /api/staff-login — Unified login for Super Admin, Admin, and Teacher by Email + Password
+router.post('/staff-login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({ message: 'Email and password are required.' });
+        }
+
+        const trimmedEmail = email.trim();
+
+        // 1. Check Admin / Super Admin table
+        const admin = await Admin.findOne({ email: new RegExp(`^${trimmedEmail}$`, 'i') });
+        if (admin) {
+            const isMatch = await admin.comparePassword(password);
+            if (isMatch) {
+                const userRole = admin.role || 'admin';
+                const token = jwt.sign(
+                    {
+                        id: admin._id,
+                        email: admin.email,
+                        role: userRole,
+                        facultyId: admin.facultyId || null
+                    },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '8h' }
+                );
+
+                return res.json({
+                    token,
+                    user: {
+                        id: admin._id,
+                        name: admin.name,
+                        email: admin.email,
+                        role: userRole,
+                        facultyId: admin.facultyId || null
+                    },
+                    admin: {
+                        id: admin._id,
+                        name: admin.name,
+                        email: admin.email,
+                        role: userRole,
+                        facultyId: admin.facultyId || null
+                    }
+                });
+            }
+        }
+
+        // 2. Check Teacher table
+        const teacher = await Teacher.findOne({ email: new RegExp(`^${trimmedEmail}$`, 'i') });
+        if (teacher) {
+            const isMatch = await teacher.comparePassword(password);
+            if (isMatch) {
+                const token = jwt.sign(
+                    {
+                        id: teacher._id,
+                        email: teacher.email,
+                        role: 'teacher',
+                        facultyId: teacher.facultyId || null,
+                        classId: teacher.classId || null
+                    },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '8h' }
+                );
+
+                return res.json({
+                    token,
+                    user: {
+                        id: teacher._id,
+                        name: teacher.name,
+                        email: teacher.email,
+                        phone: teacher.phone,
+                        address: teacher.address,
+                        role: 'teacher',
+                        facultyId: teacher.facultyId || null,
+                        classId: teacher.classId || null
+                    },
+                    teacher: {
+                        id: teacher._id,
+                        name: teacher.name,
+                        email: teacher.email,
+                        phone: teacher.phone,
+                        address: teacher.address,
+                        role: 'teacher',
+                        facultyId: teacher.facultyId || null,
+                        classId: teacher.classId || null
+                    }
+                });
+            }
+        }
+
+        return res.status(401).json({ message: 'Invalid email or password.' });
+    } catch (error) {
+        console.error('Staff login error:', error.message);
+        res.status(500).json({ message: 'Server error during login.', error: error.message });
+    }
+});
+
 module.exports = router;

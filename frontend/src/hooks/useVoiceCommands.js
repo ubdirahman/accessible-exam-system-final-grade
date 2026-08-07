@@ -47,16 +47,12 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
 
         if (!text) return false;
 
-        const commandOptions = optionsRef.current || {};
-        if (!isFinal && commandOptions.processInterimCommands !== true) {
-            return false;
-        }
-
         const commands = commandMapRef.current || {};
-
         const isWaitingConfirmation = typeof commands.__isWaitingConfirmation__ === 'function'
             ? commands.__isWaitingConfirmation__()
             : false;
+
+        const commandOptions = optionsRef.current || {};
 
         // Allow interim results to trigger confirmation immediately when waiting for Yes/No
         if (!isFinal && commandOptions.processInterimCommands !== true && !isWaitingConfirmation) {
