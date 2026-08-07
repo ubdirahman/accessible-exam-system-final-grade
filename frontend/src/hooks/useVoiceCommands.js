@@ -33,24 +33,16 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
     const commandMapRef = useRef(commandMap);
     const fallbackRef = useRef(fallbackHandler);
     const optionsRef = useRef(options || {});
+    const lastExecutedRef = useRef(0);
 
-    // Keep refs current & restart recognition if language changes dynamically
-    useEffect(() => {
-        commandMapRef.current = commandMap;
-        fallbackRef.current = fallbackHandler;
-
-        const prevLang = optionsRef.current?.lang;
-        optionsRef.current = options || {};
-
-        if (enabled && recognitionRef.current && options?.lang && prevLang && prevLang !== options.lang) {
-            stopListening();
-            window.setTimeout(() => {
-                if (enabled) {
-                    startListening(options.lang);
-                }
-            }, 100);
+    const stopListening = useCallback(() => {
+        if (recognitionRef.current) {
+            recognitionRef.current.onend = null;
+            recognitionRef.current.stop();
+            recognitionRef.current = null;
         }
-    }, [commandMap, fallbackHandler, options, enabled, stopListening, startListening]);
+        setIsListening(false);
+    }, []);
 
     const processCommand = useCallback((spoken, isFinal = true) => {
         const text = normalizeTranscript(spoken);
@@ -199,8 +191,6 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         return false;
     }, []);
 
-    const lastExecutedRef = useRef(0);
-
     const startListening = useCallback((languageOverride = '') => {
         if (!enabled) return;
         if (recognitionRef.current) return; // already listening
@@ -298,14 +288,23 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         }
     }, [enabled, processCommand]);
 
-    const stopListening = useCallback(() => {
-        if (recognitionRef.current) {
-            recognitionRef.current.onend = null;
-            recognitionRef.current.stop();
-            recognitionRef.current = null;
+    // Keep refs current & restart recognition if language changes dynamically
+    useEffect(() => {
+        commandMapRef.current = commandMap;
+        fallbackRef.current = fallbackHandler;
+
+        const prevLang = optionsRef.current?.lang;
+        optionsRef.current = options || {};
+
+        if (enabled && recognitionRef.current && options?.lang && prevLang && prevLang !== options.lang) {
+            stopListening();
+            window.setTimeout(() => {
+                if (enabled) {
+                    startListening(options.lang);
+                }
+            }, 100);
         }
-        setIsListening(false);
-    }, []);
+    }, [commandMap, fallbackHandler, options, enabled, stopListening, startListening]);
 
     const toggleListening = useCallback(() => {
         if (isListening) {
