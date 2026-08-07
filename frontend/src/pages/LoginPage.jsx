@@ -160,6 +160,7 @@ export default function LoginPage() {
         const isPleaseEnterId = typeof text === 'string' && (
             text.includes('Fadlan akhri nambarkaaga') ||
             text.includes('Fadlan geli ID-gaaga') ||
+            text.includes('Waxad joogtaa page loginka') ||
             text.includes('mar kale akhri')
         );
 
@@ -210,7 +211,7 @@ export default function LoginPage() {
         } else if (current) {
             speakAndListen(spellStudentId(current), ENGLISH_ID_TTS_OPTIONS);
         } else {
-            speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+            speakAndListen('Waxad joogtaa page loginka Fadlan geli id gaag.');
         }
         focusStudentInput();
     }, [focusStudentInput, playConfirmationSequence, speakAndListen, stop, voiceStep]);
@@ -231,7 +232,7 @@ export default function LoginPage() {
         if (existingId) {
             speakAndListen(spellStudentId(existingId), ENGLISH_ID_TTS_OPTIONS);
         } else {
-            speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+            speakAndListen('Waxad joogtaa page loginka Fadlan geli id gaag.');
         }
         focusStudentInput();
     }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
@@ -248,7 +249,7 @@ export default function LoginPage() {
     const readCurrentStudentId = useCallback(() => {
         const current = sanitizeStudentId(studentIdRef.current);
         if (!current) {
-            speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+            speakAndListen('Waxad joogtaa page loginka Fadlan geli id gaag.');
             focusStudentInput();
             return;
         }
@@ -272,7 +273,7 @@ export default function LoginPage() {
         setIdConfirmationMode('login');
         setVoiceStep('LISTENING_ID');
         markStudentIdActivity();
-        speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+        speakAndListen('Waxad joogtaa page loginka Fadlan geli id gaag.');
         focusStudentInput();
     }, [focusStudentInput, markStudentIdActivity, speakAndListen]);
 
@@ -295,7 +296,7 @@ export default function LoginPage() {
         if (updated) {
             speakAndListen(spellStudentId(updated), ENGLISH_ID_TTS_OPTIONS);
         } else {
-            speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+            speakAndListen('Waxad joogtaa page loginka Fadlan geli id gaag.');
         }
 
         focusStudentInput();
@@ -335,7 +336,7 @@ export default function LoginPage() {
 
         updateStudentId(cleanId);
         setError('');
-        setIdConfirmationMode('save');
+        setIdConfirmationMode('login');
         setVoiceStep('CONFIRM_ID');
         playConfirmationSequence(cleanId);
         focusStudentInput();
@@ -407,8 +408,8 @@ export default function LoginPage() {
 
         // If in CONFIRM_ID or CONFIRM_CLEAR state, evaluate YES / NO intent immediately
         if (voiceStepRef.current === 'CONFIRM_ID' || voiceStepRef.current === 'CONFIRM_CLEAR') {
-            const yesRegex = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|aa|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa|ha|hey|hi|how|home|he|her|high|hue)(?:$|\b)/i;
-            const noRegex = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|my\s*a|my\s*ah|my|may|ma'am|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax|me|mind|might|mine)(?:$|\b)/i;
+            const yesRegex = /(?:^|\b)(?:haa*|haah*|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa)(?:$|\b)/i;
+            const noRegex = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax)(?:$|\b)/i;
 
             if (yesRegex.test(cleaned)) {
                 const commands = getCommandMap();
@@ -448,7 +449,6 @@ export default function LoginPage() {
 
         // Cap at 8 characters max (typical student ID: 1 letter + 7 digits)
         if (nextId.length > 8) {
-            // If spoken alone is a full valid ID, use it as replacement
             if (/^[A-Z]\d{4,7}$/.test(spokenId) || /^\d{7,8}$/.test(spokenId)) {
                 nextId = spokenId;
             } else {
@@ -463,14 +463,12 @@ export default function LoginPage() {
         // Clear any pending auto-confirm timer
         if (interimIdTimeoutRef.current) clearTimeout(interimIdTimeoutRef.current);
 
-        // If the ID is now complete (>= 7 chars), confirm after brief pause
-        if (isCompleteStudentId(nextId)) {
-            interimIdTimeoutRef.current = setTimeout(() => {
-                if (voiceStepRef.current === 'LISTENING_ID') {
-                    promptStudentIdConfirmation(sanitizeStudentId(studentIdRef.current));
-                }
-            }, 500); // 500ms brief debounce then immediately confirm
-        }
+        // Auto-confirm candidate ID after brief pause
+        interimIdTimeoutRef.current = setTimeout(() => {
+            if (voiceStepRef.current === 'LISTENING_ID' && studentIdRef.current) {
+                promptStudentIdConfirmation(sanitizeStudentId(studentIdRef.current));
+            }
+        }, 400);
 
         focusStudentInput();
         return true;
@@ -680,7 +678,7 @@ export default function LoginPage() {
                 setIdConfirmationMode('login');
                 setVoiceStep('LISTENING_ID');
                 markStudentIdActivity();
-                speakAndListen('Fadlan akhri nambarkaaga ardayga.');
+                speakAndListen('Waxad joogtaa page loginka Fadlan geli id gaag.');
                 focusStudentInput();
             };
 
@@ -688,51 +686,27 @@ export default function LoginPage() {
                 ...baseCommands,
                 'yes': handleConfirmYes,
                 'haa': handleConfirmYes,
-                'ha': handleConfirmYes,
                 'haah': handleConfirmYes,
-                'hah': handleConfirmYes,
-                'huh': handleConfirmYes,
                 'haye': handleConfirmYes,
-                'hayeh': handleConfirmYes,
                 'diyaar': handleConfirmYes,
                 'sax': handleConfirmYes,
                 'waa sax': handleConfirmYes,
                 'geli': handleConfirmYes,
-                'ingeli': handleConfirmYes,
                 'hubaa': handleConfirmYes,
                 'yep': handleConfirmYes,
                 'yeah': handleConfirmYes,
-                'yea': handleConfirmYes,
-                'yah': handleConfirmYes,
                 'sure': handleConfirmYes,
                 'ok': handleConfirmYes,
                 'okay': handleConfirmYes,
-                'hi': handleConfirmYes,
-                'hey': handleConfirmYes,
-                'how': handleConfirmYes,
-                'home': handleConfirmYes,
-                'he': handleConfirmYes,
-                'her': handleConfirmYes,
                 'no': handleConfirmNo,
                 'maya': handleConfirmNo,
                 'mayo': handleConfirmNo,
                 'maaya': handleConfirmNo,
-                'my a': handleConfirmNo,
-                'my ah': handleConfirmNo,
-                'my': handleConfirmNo,
-                'may': handleConfirmNo,
                 'tirtir': handleConfirmNo,
                 'iga tirtir': handleConfirmNo,
                 'cancel': handleConfirmNo,
                 'nope': handleConfirmNo,
-                'nah': handleConfirmNo,
-                'never': handleConfirmNo,
-                'stop': handleConfirmNo,
-                'me': handleConfirmNo,
-                'mind': handleConfirmNo,
-                'try': () => promptStudentIdConfirmation(studentIdRef.current),
-                'again': () => promptStudentIdConfirmation(studentIdRef.current),
-                'repeat': () => promptStudentIdConfirmation(studentIdRef.current)
+                'nah': handleConfirmNo
             };
         }
 
@@ -776,7 +750,7 @@ export default function LoginPage() {
             setLastIdActivityAt(Date.now());
             lastProcessedSpeechRef.current = { text: '', time: 0 };
 
-            const welcomeMessage = 'Fadlan akhri nambarkaaga ardayga.';
+            const welcomeMessage = 'Waxad joogtaa page loginka Fadlan geli id gaag.';
 
             speakAndListen(welcomeMessage);
             focusStudentInput();
@@ -788,27 +762,7 @@ export default function LoginPage() {
         }
     }, [cancelStudentVoiceFlow, focusStudentInput, mode, speakAndListen, stopListening]);
 
-    useEffect(() => {
-        if (mode !== 'student' || loading || voiceStep !== 'LISTENING_ID') return undefined;
 
-        const currentId = sanitizeStudentId(studentId);
-        if (!currentId) return undefined;
-        if (currentId === silenceConfirmedId) return undefined;
-
-        const elapsed = Date.now() - lastIdActivityAt;
-        const remaining = Math.max(0, 1500 - elapsed);
-
-        const timeoutId = window.setTimeout(() => {
-            const latestId = sanitizeStudentId(studentIdRef.current);
-            if (latestId && voiceStepRef.current === 'LISTENING_ID' && isLikelyStudentId(latestId)) {
-                promptSilenceStudentIdConfirmation(latestId);
-            }
-        }, remaining);
-
-        return () => {
-            window.clearTimeout(timeoutId);
-        };
-    }, [lastIdActivityAt, loading, mode, promptSilenceStudentIdConfirmation, silenceConfirmedId, studentId, voiceStep]);
 
     // Safety Cleanup Effect: Ensure absolutely no audio runs in the background
     // if the user switches to Admin/Teacher or leaves the page.

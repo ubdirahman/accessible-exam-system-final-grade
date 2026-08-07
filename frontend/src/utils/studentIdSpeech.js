@@ -425,12 +425,7 @@ export function sanitizeStudentId(value = '') {
 // ─────────────────────────────────────────────
 export function isLikelyStudentId(value = '') {
     const id = sanitizeStudentId(value);
-    if (!id) return false;
-    // At least 4 characters for silence fallback after 10 seconds
-    if (id.length >= 4) return true;
-    if (/^[A-Z]\d{2,}/.test(id)) return true;
-    if (/^\d{4,}/.test(id)) return true;
-    return false;
+    return id.length >= 1;
 }
 
 // ─────────────────────────────────────────────
