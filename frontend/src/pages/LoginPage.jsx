@@ -469,7 +469,7 @@ export default function LoginPage() {
                 if (voiceStepRef.current === 'LISTENING_ID') {
                     promptStudentIdConfirmation(sanitizeStudentId(studentIdRef.current));
                 }
-            }, 3000); // 3 seconds after last final result
+            }, 500); // 500ms brief debounce then immediately confirm
         }
 
         focusStudentInput();
@@ -796,7 +796,7 @@ export default function LoginPage() {
         if (currentId === silenceConfirmedId) return undefined;
 
         const elapsed = Date.now() - lastIdActivityAt;
-        const remaining = Math.max(0, 3000 - elapsed);
+        const remaining = Math.max(0, 1500 - elapsed);
 
         const timeoutId = window.setTimeout(() => {
             const latestId = sanitizeStudentId(studentIdRef.current);
