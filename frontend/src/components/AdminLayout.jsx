@@ -111,27 +111,16 @@ export default function AdminLayout({ children }) {
             <aside className="admin-sidebar">
                 <div className="navbar-brand sidebar-brand">
                     <span className="brand-mark" aria-hidden="true">
-                        <img src="/assets/brand/logada.jpg" alt="Logo" className="brand-logo-img" />
+                        <img src="/assets/brand/logada.jpg" alt="Profile Logo" className="brand-logo-img" />
                     </span>
                     <div className="sidebar-title">
-                        Accessible Exam
-                        <span>System</span>
-                    </div>
-                </div>
-
-                <div className="sidebar-profile">
-                    <div className="sidebar-avatar" aria-hidden="true">
-                        <img src="/assets/brand/logada.jpg" alt="Profile Logo" className="sidebar-profile-img" />
-                        <span className="online-dot"></span>
-                    </div>
-                    <div>
-                        <div className="sidebar-profile-name">{roleLabel}</div>
-                        <div className="sidebar-profile-role">
+                        {roleLabel}
+                        <span>
                             {roleSubtitle}
                             {user?.role === 'teacher' && (myClass || user?.classId?.name) && (
-                                <span>{myClass?.name || user.classId.name || 'Assigned Class'}</span>
+                                ` - ${myClass?.name || user.classId.name}`
                             )}
-                        </div>
+                        </span>
                     </div>
                 </div>
 

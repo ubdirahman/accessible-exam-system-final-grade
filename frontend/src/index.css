@@ -4686,11 +4686,11 @@ html[data-theme="dark"] .btn-ghost {
 
 /* Custom Profile & Brand Avatar Image Styles */
 .brand-logo-img {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
   object-fit: cover;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   display: block;
 }
 
