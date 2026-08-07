@@ -34,12 +34,23 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
     const fallbackRef = useRef(fallbackHandler);
     const optionsRef = useRef(options || {});
 
-    // Keep refs current
+    // Keep refs current & restart recognition if language changes dynamically
     useEffect(() => {
         commandMapRef.current = commandMap;
         fallbackRef.current = fallbackHandler;
+
+        const prevLang = optionsRef.current?.lang;
         optionsRef.current = options || {};
-    }, [commandMap, fallbackHandler, options]);
+
+        if (enabled && recognitionRef.current && options?.lang && prevLang && prevLang !== options.lang) {
+            stopListening();
+            window.setTimeout(() => {
+                if (enabled) {
+                    startListening(options.lang);
+                }
+            }, 100);
+        }
+    }, [commandMap, fallbackHandler, options, enabled, stopListening, startListening]);
 
     const processCommand = useCallback((spoken, isFinal = true) => {
         const text = normalizeTranscript(spoken);
@@ -60,8 +71,8 @@ export function useVoiceCommands(commandMap = {}, enabled = true, fallbackHandle
         }
 
         const checkConfirmation = () => {
-            const yesPatterns = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa)(?:$|\b)/i;
-            const noPatterns = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax)(?:$|\b)/i;
+            const yesPatterns = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|aa|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa|ha|hey|hi|how|home|he|her|high|hue)(?:$|\b)/i;
+            const noPatterns = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|my\s*a|my\s*ah|my|may|ma'am|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax|me|mind|might|mine)(?:$|\b)/i;
             if (noPatterns.test(text) && commands['no']) {
                 setLastCommand('No');
                 commands['no']();

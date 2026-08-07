@@ -407,8 +407,8 @@ export default function LoginPage() {
 
         // If in CONFIRM_ID or CONFIRM_CLEAR state, evaluate YES / NO intent immediately
         if (voiceStepRef.current === 'CONFIRM_ID' || voiceStepRef.current === 'CONFIRM_CLEAR') {
-            const yesRegex = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa)(?:$|\b)/i;
-            const noRegex = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax)(?:$|\b)/i;
+            const yesRegex = /(?:^|\b)(?:haa*|haah*|hah|huh|ah+|aah+|aa|haye*h*|haya|hiya|yah|yea|yeah|yep|yup|yes|sure|confirm|do\s*it|okay|ok|o\.?k|diyaar|waan\s*diyaar\s*ahay|sax|saxan|waa\s*sax|sax\s*weeye|haa\s*sax|haa\s*waa\s*sax|geli|haa\s*geli|ingeli|hubaa|haa\s*hubaa|ha|hey|hi|how|home|he|her|high|hue)(?:$|\b)/i;
+            const noRegex = /(?:^|\b)(?:maya*|ma\s*ya|maaya*|mya*|mayya|mayo|mayoo|my\s*a|my\s*ah|my|may|ma'am|no|nah|nope|naah|cancel|stop|ha\s*bilaabin|ma\s*diyaar\s*ihi|ma\s*diyaar\s*ahi|nay|noo+|never|tirtir|iga\s*tirtir|ma\s*saxan|maaha|ma\s*ahan|maaha\s*sax|me|mind|might|mine)(?:$|\b)/i;
 
             if (yesRegex.test(cleaned)) {
                 const commands = getCommandMap();
@@ -699,10 +699,37 @@ export default function LoginPage() {
                 'waa sax': handleConfirmYes,
                 'geli': handleConfirmYes,
                 'ingeli': handleConfirmYes,
+                'hubaa': handleConfirmYes,
+                'yep': handleConfirmYes,
+                'yeah': handleConfirmYes,
+                'yea': handleConfirmYes,
+                'yah': handleConfirmYes,
+                'sure': handleConfirmYes,
+                'ok': handleConfirmYes,
+                'okay': handleConfirmYes,
+                'hi': handleConfirmYes,
+                'hey': handleConfirmYes,
+                'how': handleConfirmYes,
+                'home': handleConfirmYes,
+                'he': handleConfirmYes,
+                'her': handleConfirmYes,
                 'no': handleConfirmNo,
                 'maya': handleConfirmNo,
                 'mayo': handleConfirmNo,
+                'maaya': handleConfirmNo,
+                'my a': handleConfirmNo,
+                'my ah': handleConfirmNo,
+                'my': handleConfirmNo,
+                'may': handleConfirmNo,
                 'tirtir': handleConfirmNo,
+                'iga tirtir': handleConfirmNo,
+                'cancel': handleConfirmNo,
+                'nope': handleConfirmNo,
+                'nah': handleConfirmNo,
+                'never': handleConfirmNo,
+                'stop': handleConfirmNo,
+                'me': handleConfirmNo,
+                'mind': handleConfirmNo,
                 'try': () => promptStudentIdConfirmation(studentIdRef.current),
                 'again': () => promptStudentIdConfirmation(studentIdRef.current),
                 'repeat': () => promptStudentIdConfirmation(studentIdRef.current)
@@ -710,6 +737,15 @@ export default function LoginPage() {
         }
 
         return baseCommands;
+    };
+
+    const recognitionOptions = {
+        lang: voiceStep === 'CONFIRM_ID' || voiceStep === 'CONFIRM_CLEAR' ? 'so-SO' : 'en-US',
+        fallbackLang: 'en-US',
+        continuous: true,
+        interimResults: true,
+        processInterimCommands: true,
+        maxAlternatives: 5
     };
 
     const {
@@ -722,7 +758,7 @@ export default function LoginPage() {
         getCommandMap(),
         mode === 'student',
         mode === 'student' ? handleStudentVoiceFallback : null,
-        STUDENT_ID_RECOGNITION_OPTIONS
+        recognitionOptions
     );
 
     useEffect(() => {
