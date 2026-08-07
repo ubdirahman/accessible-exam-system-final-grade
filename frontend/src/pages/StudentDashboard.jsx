@@ -511,7 +511,9 @@ export default function StudentDashboard() {
             <div className="app-container">
                 <div className="navbar" style={{ position: 'relative', borderRadius: 'var(--radius)', marginBottom: 32 }}>
                     <div className="navbar-brand">
-                        <span className="icon" aria-hidden="true"><i className="fa-solid fa-universal-access"></i></span>
+                        <span className="icon" aria-hidden="true">
+                            <img src="/assets/brand/logada.jpg" alt="Logo" className="student-navbar-logo-img" />
+                        </span>
                         Student Dashboard
                     </div>
                     <div className="navbar-actions">
@@ -527,7 +529,10 @@ export default function StudentDashboard() {
                         }`}>
                             <i className="fa-solid fa-microphone-lines" aria-hidden="true"></i> {recordingState.status === 'recording' ? 'Recording On' : recordingState.status === 'error' ? 'Recording Error' : 'Recording Standby'}
                         </span>
-                        <span className="badge badge-info"><i className="fa-solid fa-user-graduate" aria-hidden="true"></i> {user?.name}</span>
+                        <span className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                            <img src="/assets/brand/logada.jpg" alt="Student Profile" className="student-profile-avatar-img" />
+                            {user?.name}
+                        </span>
                         <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
                             Logout
                         </button>

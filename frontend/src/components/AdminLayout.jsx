@@ -111,7 +111,7 @@ export default function AdminLayout({ children }) {
             <aside className="admin-sidebar">
                 <div className="navbar-brand sidebar-brand">
                     <span className="brand-mark" aria-hidden="true">
-                        <i className={brandIcon}></i>
+                        <img src="/assets/brand/logada.jpg" alt="Logo" className="brand-logo-img" />
                     </span>
                     <div className="sidebar-title">
                         Accessible Exam
@@ -121,7 +121,7 @@ export default function AdminLayout({ children }) {
 
                 <div className="sidebar-profile">
                     <div className="sidebar-avatar" aria-hidden="true">
-                        <i className="fa-solid fa-user"></i>
+                        <img src="/assets/brand/logada.jpg" alt="Profile Logo" className="sidebar-profile-img" />
                         <span className="online-dot"></span>
                     </div>
                     <div>
@@ -198,7 +198,9 @@ export default function AdminLayout({ children }) {
                             <i className={`fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`} aria-hidden="true"></i>
                         </button>
                         <div className="topbar-user">
-                            <div className="topbar-avatar" aria-hidden="true">{userInitial}</div>
+                            <div className="topbar-avatar" aria-hidden="true">
+                                <img src="/assets/brand/logada.jpg" alt="User Profile" className="topbar-profile-img" />
+                            </div>
                             <span>{roleLabel}</span>
                             <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
                         </div>
