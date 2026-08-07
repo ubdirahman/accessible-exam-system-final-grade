@@ -73,6 +73,7 @@ export default function AdminExams() {
         e.preventDefault();
         if (!importFile) return setImportError('Please select a file first.');
         if (!selectedClass) return setImportError('Please select a class for the exam.');
+        if (!selectedSubject) return setImportError('Please select a subject for the exam.');
         setImportFileLoading(true);
         setImportError(null);
         setImportSuccess(null);
@@ -80,7 +81,7 @@ export default function AdminExams() {
         const formData = new FormData();
         formData.append('file', importFile);
         formData.append('classId', selectedClass);
-        if (selectedSubject) formData.append('subjectId', selectedSubject);
+        formData.append('subjectId', selectedSubject);
         if (isSuper) formData.append('facultyId', selectedFaculty);
 
         try {
@@ -327,9 +328,9 @@ export default function AdminExams() {
                                     </select>
                                 </div>
                                 <div className="input-group">
-                                    <label>Subject (Optional)</label>
-                                    <select className="select" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
-                                        <option value="">-- Select Subject --</option>
+                                    <label>Subject *</label>
+                                    <select className="select" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} required>
+                                        <option value="">-- Select Subject * --</option>
                                         {subjects.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
                                     </select>
                                 </div>

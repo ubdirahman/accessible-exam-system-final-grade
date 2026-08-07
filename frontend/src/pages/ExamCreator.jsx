@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState, useRef } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import { downloadExcelTemplate, downloadWordTemplate } from '../utils/templateGenerator';
 
 export default function ExamCreator() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const isEdit = !!id;
+
+    const fileInputRef = useRef(null);
 
     const isSuper = user?.role === 'super_admin';
     const isTeacher = user?.role === 'teacher';
@@ -21,10 +25,10 @@ export default function ExamCreator() {
     const [selectedFaculty, setSelectedFaculty] = useState(user?.facultyId || '');
     
     const [classes, setClasses] = useState([]);
-    const [selectedClass, setSelectedClass] = useState(user?.classId || '');
+    const [selectedClass, setSelectedClass] = useState(location.state?.initialClassId || user?.classId || '');
     
     const [subjects, setSubjects] = useState([]);
-    const [selectedSubject, setSelectedSubject] = useState('');
+    const [selectedSubject, setSelectedSubject] = useState(location.state?.initialSubjectId || '');
     
     const [sections, setSections] = useState([
         {
@@ -45,6 +49,8 @@ export default function ExamCreator() {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(isEdit);
+    const [importingFile, setImportingFile] = useState(false);
+    const [importBanner, setImportBanner] = useState('');
 
     useEffect(() => {
         const loadInitialData = async () => {
@@ -77,6 +83,30 @@ export default function ExamCreator() {
                     if (mappedSections.length > 0) {
                         setSections(mappedSections);
                     }
+                } else if (location.state?.importedExam) {
+                    const imported = location.state.importedExam;
+                    if (imported.title) setTitle(imported.title);
+                    if (imported.timeLimit) setTimeLimit(imported.timeLimit);
+                    if (imported.sections && imported.sections.length > 0) {
+                        const mapped = imported.sections.map(sec => ({
+                            name: sec.name || 'Part 1',
+                            questionType: sec.questions?.[0]?.type || 'mcq',
+                            questions: (sec.questions || []).map(q => ({
+                                type: q.type || 'mcq',
+                                questionText: q.questionText || '',
+                                options: q.options || (q.type === 'mcq' ? [
+                                    { label: 'A', text: '' }, { label: 'B', text: '' },
+                                    { label: 'C', text: '' }, { label: 'D', text: '' }
+                                ] : []),
+                                correctAnswer: q.correctAnswer || '',
+                                points: q.points || 1
+                            }))
+                        }));
+                        setSections(mapped);
+
+                        const totalQuestions = mapped.reduce((sum, s) => sum + s.questions.length, 0);
+                        setImportBanner(`Successfully imported ${totalQuestions} question(s) into editor! Please review below before saving.`);
+                    }
                 }
             } catch (err) {
                 setError('Failed to load exam data.');
@@ -85,7 +115,55 @@ export default function ExamCreator() {
             }
         };
         loadInitialData();
-    }, [id, isEdit, isSuper]);
+    }, [id, isEdit, isSuper, location.state]);
+
+    const handleInlineFileSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setImportingFile(true);
+        setError('');
+        setImportBanner('');
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const res = await api.post('/exams/parse-file', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            const imported = res.data;
+            if (imported.title) setTitle(imported.title);
+            if (imported.timeLimit) setTimeLimit(imported.timeLimit);
+
+            if (imported.sections && imported.sections.length > 0) {
+                const mapped = imported.sections.map(sec => ({
+                    name: sec.name || 'Part 1',
+                    questionType: sec.questions?.[0]?.type || 'mcq',
+                    questions: (sec.questions || []).map(q => ({
+                        type: q.type || 'mcq',
+                        questionText: q.questionText || '',
+                        options: q.options || (q.type === 'mcq' ? [
+                            { label: 'A', text: '' }, { label: 'B', text: '' },
+                            { label: 'C', text: '' }, { label: 'D', text: '' }
+                        ] : []),
+                        correctAnswer: q.correctAnswer || '',
+                        points: q.points || 1
+                    }))
+                }));
+                setSections(mapped);
+
+                const totalQuestions = mapped.reduce((sum, s) => sum + s.questions.length, 0);
+                setImportBanner(`Successfully loaded ${totalQuestions} question(s) from "${file.name}"!`);
+            }
+        } catch (err) {
+            setError(err.response?.data?.message || 'Error parsing exam file.');
+        } finally {
+            setImportingFile(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
 
     useEffect(() => {
         if (isTeacher && user?.classId && !selectedClass && !isEdit) {
@@ -232,6 +310,49 @@ export default function ExamCreator() {
                 {error && (
                     <div className="badge badge-danger" style={{ width: '100%', justifyContent: 'center', padding: 14, marginBottom: 16 }}>
                         <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> {error}
+                    </div>
+                )}
+
+                {importBanner && (
+                    <div className="badge badge-success mb-md" style={{ width: '100%', justifyContent: 'center', padding: '12px 16px', borderRadius: 8, fontSize: 14 }}>
+                        <i className="fa-solid fa-circle-check" aria-hidden="true"></i> {importBanner}
+                    </div>
+                )}
+
+                {/* Import File Quick Access Card */}
+                {!isEdit && (
+                    <div className="card mb-md bg-secondary" style={{ borderLeft: '4px solid var(--accent-primary)', padding: '16px 20px' }}>
+                        <div className="flex items-center justify-between flex-wrap gap-md">
+                            <div>
+                                <h4 style={{ margin: 0, fontWeight: 700 }} className="flex items-center gap-xs">
+                                    <i className="fa-solid fa-file-arrow-up text-primary"></i> Auto-fill from Exam File
+                                </h4>
+                                <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0 0' }}>
+                                    Upload an Excel (.xlsx), Word (.docx), or PDF (.pdf) file to automatically populate title, time limit, and questions.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-sm flex-wrap">
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept=".xlsx,.xls,.csv,.docx,.doc,.pdf"
+                                    onChange={handleInlineFileSelect}
+                                    style={{ display: 'none' }}
+                                />
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={importingFile}
+                                >
+                                    {importingFile ? (
+                                        <><i className="fa-solid fa-spinner fa-spin"></i> Parsing...</>
+                                    ) : (
+                                        <><i className="fa-solid fa-upload"></i> Upload Exam File</>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
 

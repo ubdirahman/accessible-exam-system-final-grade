@@ -102,6 +102,26 @@ async function recomputeResult(examId, studentId) {
    ============================================================ */
 
 /* ----------------------------------------------------------
+   EXAM FILE PARSE PREVIEW: Excel, Word (.doc/.docx), PDF
+   POST /parse-file
+   Parses file and returns JSON payload without creating exam
+   ---------------------------------------------------------- */
+router.post('/parse-file', verifyToken, requireAdminOrTeacher, upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+
+        const parsedData = await parseExamFile(req.file);
+        res.json(parsedData);
+    } catch (error) {
+        console.error('Exam file parse error:', error);
+        if (error instanceof ImportFormatError || error.status === 400) {
+            return res.status(error.status || 400).json({ message: error.message });
+        }
+        res.status(500).json({ message: 'Error parsing exam file: ' + error.message });
+    }
+});
+
+/* ----------------------------------------------------------
    EXAM FILE IMPORT: Excel, Word (.doc/.docx), PDF
    POST /import-file
    Supports tabular files and plain text:
@@ -116,13 +136,22 @@ router.post('/import-file', verifyToken, requireAdminOrTeacher, upload.single('f
         if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
 
         const { classId, subjectId, facultyId: bodyFacultyId } = req.body;
-        const facultyId = req.user.role === 'admin' ? req.user.facultyId : (bodyFacultyId || req.user.facultyId);
-        if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
+        const Classroom = require('../models/Classroom');
+
+        let facultyId = req.user.role === 'admin' || req.user.role === 'super_admin'
+            ? (req.user.facultyId || bodyFacultyId)
+            : (req.user.facultyId || bodyFacultyId);
+
+        if (!facultyId && classId) {
+            const klass = await Classroom.findById(classId);
+            if (klass) facultyId = klass.facultyId;
+        }
+
         if (!classId) return res.status(400).json({ message: 'classId is required.' });
+        if (!facultyId) return res.status(400).json({ message: 'facultyId is required.' });
 
         const { title: examTitle, timeLimit: examTimeLimit, sections: sectionsData } = await parseExamFile(req.file);
 
-        const Classroom = require('../models/Classroom');
         const klass = await Classroom.findOne({ _id: classId, facultyId });
         if (!klass) return res.status(400).json({ message: 'Class not found for this faculty.' });
 

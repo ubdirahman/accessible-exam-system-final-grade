@@ -96,10 +96,11 @@ function parseSectionLine(line) {
     const type = normalizeQuestionType(text);
     let name = cleanCell(
         text
+            .replace(/^(?:section|part|qayb|qaybta)\s*[:\-]?\s*/i, '')
             .replace(/\b(?:type|nooca)\s*[:\-].*$/i, '')
             .replace(/\b(?:mcq|multiple\s*choice|true\s*\/?\s*false|open\s*ended|open-ended|essay|short\s*answer)\b.*$/i, '')
     );
-    name = cleanCell(name.replace(/[:\-]+$/g, '')) || 'Section';
+    name = cleanCell(name.replace(/^[:\-]+|[:\-]+$/g, '')) || 'Section 1';
 
     return { name, type };
 }

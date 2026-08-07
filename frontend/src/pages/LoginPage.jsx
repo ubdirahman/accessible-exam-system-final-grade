@@ -814,8 +814,23 @@ export default function LoginPage() {
     }[mode];
 
     const switchMode = (nextMode) => {
+        // Immediately kill every audio source before state changes
+        voiceRunRef.current += 1;
+        if (resumeListeningTimerRef.current) {
+            clearTimeout(resumeListeningTimerRef.current);
+            resumeListeningTimerRef.current = null;
+        }
+        if (interimIdTimeoutRef.current) {
+            clearTimeout(interimIdTimeoutRef.current);
+            interimIdTimeoutRef.current = null;
+        }
+        stop();
+        stopSomaliAudio();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        setAudioPlayingState(false);
         listeningControlsRef.current.stopListening();
-        cancelStudentVoiceFlow();
+        setGuidedEntryMode(false);
+        setVoiceStep('IDLE');
         setMode(nextMode);
         setError('');
     };

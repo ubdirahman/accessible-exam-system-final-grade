@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import api from '../api/axios';
+import { useAuth } from '../context/AuthContext';
 
 export default function TeacherDashboard() {
+    const { user } = useAuth();
     const [stats, setStats] = useState({
         totalExams: 0,
         activeExams: 0,
@@ -70,7 +72,22 @@ export default function TeacherDashboard() {
 
     return (
         <div className="fade-in">
-            <h1 className="mb-md" style={{ fontWeight: 800 }}>Your Overview</h1>
+            <div className="flex items-center justify-between mb-lg flex-wrap gap-sm">
+                <div>
+                    <h1 style={{ fontWeight: 800, margin: 0 }} className="flex items-center gap-xs">
+                        <i className="fa-solid fa-chalkboard-user text-primary"></i> Waxad joogtaa Dashboard-kaaga
+                    </h1>
+                    <p className="text-muted" style={{ margin: '4px 0 0 0', fontSize: 'var(--font-size-md)' }}>
+                        Ku soo dhawoow macalin <strong>{user?.name || 'Instructor'}</strong>! (Class Instructor)
+                    </p>
+                </div>
+                {user?.name && (
+                    <div className="badge badge-info flex items-center gap-xs" style={{ padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700 }}>
+                        <i className="fa-solid fa-user-check"></i> {user.name}
+                    </div>
+                )}
+            </div>
+
             <div className="stats-grid">
                 <div className="stat-card">
                     <div className="stat-value">{stats.totalExams}</div>

@@ -114,7 +114,7 @@ export default function AdminLayout({ children }) {
                         <img src="/assets/brand/logada.jpg" alt="Profile Logo" className="brand-logo-img" />
                     </span>
                     <div className="sidebar-title">
-                        {roleLabel}
+                        {user?.name || roleLabel}
                         <span>
                             {roleSubtitle}
                             {user?.role === 'teacher' && (myClass || user?.classId?.name) && (
@@ -190,7 +190,7 @@ export default function AdminLayout({ children }) {
                             <div className="topbar-avatar" aria-hidden="true">
                                 <img src="/assets/brand/logada.jpg" alt="User Profile" className="topbar-profile-img" />
                             </div>
-                            <span>{roleLabel}</span>
+                            <span>{user?.name || roleLabel}</span>
                             <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
                         </div>
                     </div>

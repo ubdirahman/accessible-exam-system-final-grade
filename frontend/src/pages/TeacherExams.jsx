@@ -4,6 +4,7 @@ import api from '../api/axios';
 import SearchInput from '../components/SearchInput';
 import { matchesSearchQuery } from '../utils/search';
 import useConfirmDialog from '../hooks/useConfirmDialog';
+import ImportExamModal from '../components/ImportExamModal';
 
 export default function TeacherExams() {
     const navigate = useNavigate();
@@ -15,6 +16,7 @@ export default function TeacherExams() {
     // UI States
     const [selectedExam, setSelectedExam] = useState(null); // For Detail Modal
     const [searchTerm, setSearchTerm] = useState('');
+    const [showImportModal, setShowImportModal] = useState(false);
 
     const { confirmDialog, askConfirm } = useConfirmDialog();
 
@@ -86,14 +88,24 @@ export default function TeacherExams() {
     return (
         <div className="fade-in">
             {confirmDialog}
-            <div className="flex items-center justify-between mb-lg">
+            <ImportExamModal
+                isOpen={showImportModal}
+                onClose={() => setShowImportModal(false)}
+                onSuccess={loadExams}
+            />
+            <div className="flex items-center justify-between mb-lg flex-wrap gap-sm">
                 <div>
                     <h1 style={{ fontWeight: 800 }}>My Examinations</h1>
                     <p className="text-muted">Manage your own exams, monitor students, and view results.</p>
                 </div>
-                <Link to="/teacher/create-exam" className="btn btn-primary">
-                    <i className="fa-solid fa-plus"></i> Add New Exam
-                </Link>
+                <div className="flex gap-sm">
+                    <button className="btn btn-secondary" onClick={() => setShowImportModal(true)}>
+                        <i className="fa-solid fa-file-import"></i> Import Exam
+                    </button>
+                    <Link to="/teacher/create-exam" className="btn btn-primary">
+                        <i className="fa-solid fa-plus"></i> Add New Exam
+                    </Link>
+                </div>
             </div>
 
             {error && <div className="badge badge-danger mb-md">{error}</div>}
